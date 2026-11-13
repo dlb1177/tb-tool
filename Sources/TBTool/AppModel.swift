@@ -664,8 +664,16 @@ final class AppModel: ObservableObject {
                             source: (() -> Engagement)? = nil, commit: ((GroupingDraft) -> Bool)? = nil) {
         let title = draft.groupingID == nil ? (draft.parent == nil ? "New Grouping" : "New Subgroup") : "Edit Grouping"
         Windows.shared.show("\(key):\(draft.groupingID ?? "new")", title: title,
-                            size: NSSize(width: 480, height: 300), minSize: NSSize(width: 440, height: 280), frameName: "grouping-editor") {
+                            size: NSSize(width: 500, height: 350), minSize: NSSize(width: 460, height: 320), frameName: "grouping-editor") {
             GroupingSheet(draft: draft, sections: sections, source: source, commit: commit)
+        }
+    }
+
+    /// Accounts whose type disagrees with their grouping's, to be settled grouping by grouping.
+    func showTypeReview() {
+        guard engagement != nil else { return }
+        Windows.shared.show("type-review", title: "Review Account Types", size: NSSize(width: 1000, height: 620), minSize: NSSize(width: 760, height: 420)) {
+            TypeConflictReview()
         }
     }
 

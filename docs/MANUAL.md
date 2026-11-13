@@ -87,8 +87,9 @@ and on screen (credits are shown in brackets). A column of a trial balance total
 is in balance.
 
 **Groupings.** A grouping is a tax line or lead-schedule line (`L01 · CASH`) that accounts roll
-up to. Groupings belong to sections ("Sch. L Accounts"). A grouping can have **subgroups**.
-Each file carries its own grouping list.
+up to. Groupings belong to sections ("Sch. L Accounts"). A grouping can have **subgroups**, and
+it says what **type of account** belongs in it (cash is an asset). Each file carries its own
+grouping list.
 
 **The current year and prior periods.** The year of the file's year end is the current year.
 Prior years' closing balances can be stored beside it and are shown as **PP1** (one year
@@ -507,7 +508,12 @@ the whole selection.
 **Account types** are asset, liability, equity, revenue and expense. On import the type is read
 from the file's own type column if it has one, otherwise guessed from the leading digit of the
 number (1 asset, 2 liability, 3 equity, 4 revenue, 5 to 9 expense), otherwise from the name.
-Net income is computed from the revenue and expense accounts, so check the types.
+Net income is computed from the revenue and expense accounts, so the types matter.
+
+**An account takes the type of its grouping.** Putting an account in `L01 · CASH` makes it an
+asset, and the status line says how many types changed. If a type is changed afterwards so
+that it disagrees with the grouping, a banner appears here with **Review Account Types…**
+([section 10](#10-groupings)).
 
 **Deleting** is allowed only for an account with no balances (this year or a prior year) and no
 journal lines.
@@ -548,6 +554,12 @@ way within their grouping; those with no code of their own follow, by name. A ne
 falls into place as soon as you add it, and changing a code moves it. Every picker and every
 report uses the same order. Sections stay in the order they were set up.
 
+**Account type.** Every grouping has an account type: asset, liability, equity, revenue or
+expense, or *Any type* for a memo line. You choose it when you add a grouping (the Add button
+waits until you have), and it is shown in the Account Type column. A subgroup has no type of
+its own; it uses its grouping's. Changing a grouping's type changes the type of every account
+in it, and the editor tells you how many before you save.
+
 **Rules for codes and subgroups:**
 
 - **Every code is used once.** No two groupings, and no two subgroups, can have the same code.
@@ -566,6 +578,28 @@ older built-in list had six "815 OTHER - …" lines). Such a file opens normally
 List screen and the data check point it out, and **Combine as Subgroups** puts them under one
 grouping with that code in one undoable step. No account loses its assignment and no total
 changes.
+
+### When account types and groupings disagree
+
+Accounts follow their grouping's type automatically, so a disagreement only arises when a type
+is changed afterwards: on the Accounts screen, by a chart import, by editing the file by hand,
+or in a file from before groupings had types. The data check counts each grouping affected,
+and a banner on the Accounts and Grouping List screens offers **Review Account Types…**.
+
+![Reviewing account types](images/type-review.png)
+
+The review lists each grouping that holds accounts of another type, with what it is set for,
+what it holds, and the accounts that differ with their balances. For each grouping:
+
+- **This grouping and its accounts are** sets one type for the grouping and everything in it
+  (including its subgroups). It starts on the grouping's own type, so the accounts that differ
+  come into line. Choose another type and the grouping itself changes, taking all of its
+  accounts with it.
+- **Take out of the grouping** on an account leaves that account's type alone and ungroups it
+  instead, for an account that was simply put in the wrong place.
+- Each row previews the change ("Expense → Asset").
+
+**Apply** makes every change in one undoable step.
 
 ### Grouping reports
 
@@ -598,14 +632,15 @@ The Grouping List screen's **List** menu:
 
   ![Importing a grouping list](images/grouping-import.png)
 
-- **Export Grouping List** as JSON or CSV. The CSV columns are Section, Code, Name, ID and
-  Subgroup Of.
+- **Export Grouping List** as JSON or CSV. The CSV columns are Section, Code, Name, Account
+  Type, ID and Subgroup Of.
 - **Switch to a Standard List**: the same import window, for one of your standard lists.
 - **Save as a Standard List…**: keep this file's list on your Mac under a name.
 - **Manage Standard Lists…**: opens the app's settings.
 
-In a sheet you write by hand, give a subgroup a **Subgroup Of** column holding its grouping's
-code or ID, and leave its own code blank if you like. Rows that share a code are brought in as
+In a sheet you write by hand, add an **Account Type** column (Asset, Liability, Equity,
+Revenue, Expense, or blank for any). Give a subgroup a **Subgroup Of** column holding its
+grouping's code or ID, and leave its own code blank if you like. Rows that share a code are brought in as
 one grouping with subgroups, because a code is used once.
 
 ### Standard grouping lists
@@ -766,6 +801,8 @@ counts the problems; click it to read them. It reports:
 - an account pointing at a grouping that is not in the list;
 - duplicate ids;
 - a code used by more than one grouping;
+- a grouping holding accounts of another type than the grouping's, with a **Review Account
+  Types…** button;
 - a subgroup whose grouping is missing;
 - linked files that cannot be found, with a **Fix Links…** button.
 
@@ -777,7 +814,7 @@ compares cleanly in version control.
 ```json
 {
   "fileType": "trial-balance",
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "name": "Summit Storage",
   "periodEnd": "2026-12-31",
   "binder": { "clientNumber": "1042", "engagement": "2026 Tax Return", "entityType": "Partnership (Form 1065)",
@@ -801,7 +838,7 @@ compares cleanly in version control.
       "references": [ { "path": "Workpapers/Mortgage interest accrual.xlsx", "note": "tab 2" } ] }
   ],
   "accounts":  [ { "id": "10001", "number": "10001", "name": "Ashford Checking", "type": "asset", "grouping": "L01" } ],
-  "groupings": [ { "id": "815", "code": "815", "name": "OTHER", "section": "8825 Accounts" },
+  "groupings": [ { "id": "815", "code": "815", "name": "OTHER", "section": "8825 Accounts", "type": "expense" },
                  { "id": "815-MGMT", "code": "", "name": "MANAGEMENT FEES", "section": "8825 Accounts", "parent": "815" } ]
 }
 ```
@@ -813,7 +850,7 @@ compares cleanly in version control.
 | Field | Meaning |
 |---|---|
 | `fileType` | Always `"trial-balance"`. The app refuses a JSON file without it. |
-| `schemaVersion` | `3`. Files with 1 or 2 open and are saved as 3 on the next change. A higher number than the app knows is refused. |
+| `schemaVersion` | `4`. Files with 1, 2 or 3 open and are saved as 4 on the next change. A higher number than the app knows is refused. |
 | `name` | The client name. Heads every report. |
 | `periodEnd` | The year end, `YYYY-MM-DD`. Its year is the current year. |
 | `binder` | `clientNumber`, `engagement`, `entityType`, `taxID`, `firm`, `preparedBy`, `reviewedBy`. All text. |
@@ -870,6 +907,7 @@ entities, entries, accounts or groupings are not.
 | `code` | The code shown. Unique across the list. May be empty on a subgroup. |
 | `name`, `section` | As shown. |
 | `parent` | Optional. On a subgroup, the id of its grouping. |
+| `type` | Optional. The account type that belongs in the grouping: `asset`, `liability`, `equity`, `revenue` or `expense`. Left out for "any type", and on a subgroup (which uses its grouping's). In a file older than version 4, groupings from the built-in list take the built-in types when the file is opened. |
 
 ### What is and is not stored
 
@@ -879,9 +917,9 @@ each time, so they cannot drift from the entries.
 
 ### Related files
 
-- **A grouping list**: `{ "fileType": "grouping-list", "schemaVersion": 1, "name": …,
+- **A grouping list**: `{ "fileType": "grouping-list", "schemaVersion": 2, "name": …,
   "entityTypes": […], "groupings": […] }`, with groupings as above.
-- **A chart of accounts**: `{ "fileType": "chart-of-accounts", "schemaVersion": 1, "name": …,
+- **A chart of accounts**: `{ "fileType": "chart-of-accounts", "schemaVersion": 2, "name": …,
   "exportedAt": …, "accounts": [ { "number", "name", "type", "grouping" } ], "groupings": […] }`.
 
 ## 15. The command line
@@ -1042,6 +1080,9 @@ on one, these are the things to get right.
 3. Only an `eliminating` entry may name more than one trial balance.
 4. Account ids, trial balance ids, grouping ids and grouping codes are each unique.
 5. A subgroup's `parent` is a grouping that is not itself a subgroup.
+6. An account's `type` matches its grouping's `type` (for a subgroup, its parent's) when the
+   grouping has one. `tbcli map` sets the account's type to match; `tbcli check` reports any
+   that differ.
 
 ## 19. Troubleshooting
 
@@ -1070,6 +1111,10 @@ or the Accounts screen's Chart menu.
 
 **The data check says a code is used by several groupings.** The file predates unique codes.
 Grouping List ▸ Combine as Subgroups.
+
+**The data check says a grouping holds accounts of another type.** Open Review Account Types…
+from the data check, the Accounts screen or the Grouping List screen, and choose the type for
+each grouping. See [section 10](#10-groupings).
 
 **Prior-year columns are not showing.** Use the Prior Periods menu. A stored year shows only if
 it is before the file's current year.

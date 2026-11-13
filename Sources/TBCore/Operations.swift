@@ -151,10 +151,14 @@ extension Engagement {
         accounts[i] = a
     }
 
-    public mutating func setGrouping(_ groupingID: String?, forAccounts ids: Set<String>) {
+    /// Puts accounts in a grouping (or, with nil, takes them out). An account takes the account
+    /// type its grouping calls for, so the two can't disagree. Returns how many types changed.
+    @discardableResult
+    public mutating func setGrouping(_ groupingID: String?, forAccounts ids: Set<String>) -> Int {
         for i in accounts.indices where ids.contains(accounts[i].id) {
             accounts[i].grouping = groupingID
         }
+        return alignTypes(ofAccounts: ids)
     }
 
     // MARK: Groupings
@@ -290,7 +294,11 @@ extension Engagement {
                     n += 1
                 }
                 let at = list.firstIndex { $0.id == tops[0].id } ?? list.count
-                list.insert(Grouping(id: parentID, code: code, name: common, section: tops[0].section), at: at)
+                // The new grouping takes the type they share. With none (a list from before groupings had
+                // types), it takes the built-in grouping's when it is one of those; otherwise any type.
+                let shared = (Set(tops.map(\.type)).count == 1 ? tops[0].type : nil)
+                    ?? DefaultGroupings.list.first { $0.id == parentID && $0.parent == nil && $0.code.caseInsensitiveCompare(code) == .orderedSame }?.type
+                list.insert(Grouping(id: parentID, code: code, name: common, section: tops[0].section, type: shared), at: at)
             }
             for i in list.indices where tops.contains(where: { $0.id == list[i].id }) && list[i].id != parentID {
                 list[i].parent = parentID
@@ -305,7 +313,8 @@ extension Engagement {
     /// A grouping, or — with `parent` — a subgroup under one. A subgroup takes its parent's section
     /// and may leave the code blank. A code that is given must not be in use already.
     @discardableResult
-    public mutating func addGrouping(code rawCode: String, name rawName: String, section rawSection: String, parent: String? = nil) throws -> Grouping {
+    public mutating func addGrouping(code rawCode: String, name rawName: String, section rawSection: String, parent: String? = nil,
+                                     type: AccountType? = nil) throws -> Grouping {
         let code = rawCode.trimmed, name = rawName.trimmed
         var section = rawSection.trimmed
         guard !name.isEmpty else { throw TBError("A grouping needs a name.") }
@@ -332,7 +341,9 @@ extension Engagement {
             n += 1
         }
         guard !groupings.contains(where: { $0.id == id }) else { throw TBError("That grouping already exists.") }
-        let g = Grouping(id: id, code: code, name: name, section: section.isEmpty ? DefaultGroupings.sectionOther : section, parent: parent)
+        // A subgroup has no type of its own; it uses its grouping's.
+        let g = Grouping(id: id, code: code, name: name, section: section.isEmpty ? DefaultGroupings.sectionOther : section, parent: parent,
+                         type: parent == nil ? type : nil)
         // It falls into place by code within its section (or among its grouping's subgroups).
         groupings = Engagement.tidiedGroupings(groupings + [g])
         return g
@@ -344,6 +355,12 @@ extension Engagement {
 
     /// Changes a grouping. Giving it a `parent` makes it a subgroup; nil makes it a top-level grouping.
     public mutating func updateGrouping(_ id: String, code: String, name: String, section: String, parent: String?) throws {
+        try updateGrouping(id, code: code, name: name, section: section, parent: parent, type: grouping(id)?.type)
+    }
+
+    /// As above, and sets the account type the grouping calls for (nil for any). The accounts in
+    /// the grouping — and in its subgroups, or in the grouping it is moved under — follow.
+    public mutating func updateGrouping(_ id: String, code: String, name: String, section: String, parent: String?, type: AccountType?) throws {
         guard let i = groupings.firstIndex(where: { $0.id == id }) else { throw TBError("Grouping not found.") }
         guard !name.trimmed.isEmpty else { throw TBError("A grouping needs a name.") }
         // Changing the code to one that's taken isn't allowed. (Leaving an old shared code alone is.)
@@ -364,7 +381,10 @@ extension Engagement {
         groupings[i].code = code.trimmed
         groupings[i].name = name.trimmed
         groupings[i].parent = parent
+        groupings[i].type = parent == nil ? type : nil
         groupings = Engagement.tidiedGroupings(groupings)
+        let inside = Set([id] + subgroups(of: id).map(\.id))
+        alignTypes(ofAccounts: Set(accounts.filter { $0.grouping.map(inside.contains) ?? false }.map(\.id)))
     }
 
     /// Deletes a grouping. Accounts in a deleted subgroup move up to its parent; deleting a
@@ -392,6 +412,7 @@ extension Engagement {
             if let pid = g.parent {
                 if pid != g.id, let p = byID[pid], p.parent == nil {
                     x.section = p.section
+                    x.type = nil  // a subgroup uses its grouping's type
                 } else {
                     x.parent = nil
                 }
@@ -458,6 +479,7 @@ extension Engagement {
                 applied += 1
             } else if let g = resolveGrouping(groupText) {
                 accounts[i].grouping = g.id
+                alignTypes(ofAccounts: [accounts[i].id])
                 applied += 1
             } else {
                 warnings.append("Row \(n + 1): grouping “\(groupText)” isn't in the list (or its code is shared — use the id).")
@@ -712,6 +734,11 @@ extension Engagement {
             if let g = a.grouping, !groupingIDs.contains(g) {
                 out.append("Account \(a.id) points at grouping “\(g)”, which isn't in the grouping list.")
             }
+        }
+        for c in typeConflicts {
+            let g = groupingLabel(c.groupingID)
+            let list = c.mismatched.prefix(3).map { "\($0.display) is \($0.type.label.lowercased())" }.joined(separator: "; ")
+            out.append("\(g) is for \(c.groupingType.label.lowercased()) accounts, but \(c.mismatched.count) of its accounts \(c.mismatched.count == 1 ? "has" : "have") another type (\(list)\(c.mismatched.count > 3 ? "; …" : "")). Review Account Types settles it.")
         }
         for (code, sharing) in sharedGroupingCodes {
             out.append("Code \(code) is used by \(sharing.count) groupings (\(sharing.prefix(3).map(\.name).joined(separator: ", "))\(sharing.count > 3 ? ", …" : "")). Every code should be used once: on the Grouping List screen, choose Combine as Subgroups, or change the codes.")

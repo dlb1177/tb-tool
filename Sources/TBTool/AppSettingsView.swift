@@ -343,6 +343,11 @@ struct AppSettingsView: View {
                             .padding(.leading, r.depth > 0 ? 14 : 0)
                         }
                         .width(min: 200, ideal: 320)
+                        TableColumn("Account Type") { r in
+                            Text(e.groupingType(r.id)?.label ?? "Any")
+                                .foregroundStyle(r.depth == 0 && r.grouping.type != nil ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.tertiary)
+                        }
+                        .width(min: 80, ideal: 100, max: 130)
                     }
                     .contextMenu(forSelectionType: String.self) { _ in EmptyView() } primaryAction: { ids in
                         edit(ids.first, in: e)
@@ -370,9 +375,9 @@ struct AppSettingsView: View {
         model.showGroupingEditor(draft, sections: e.groupingSections, key: "standard-grouping", source: { store.scratch }) { d in
             store.change { e in
                 if let id = d.groupingID {
-                    try e.updateGrouping(id, code: d.code, name: d.name, section: d.section, parent: d.parent)
+                    try e.updateGrouping(id, code: d.code, name: d.name, section: d.section, parent: d.parent, type: d.type)
                 } else {
-                    _ = try e.addGrouping(code: d.code, name: d.name, section: d.section, parent: d.parent)
+                    _ = try e.addGrouping(code: d.code, name: d.name, section: d.section, parent: d.parent, type: d.type)
                 }
             }
         }

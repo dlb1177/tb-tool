@@ -77,8 +77,9 @@ struct ImportWizard: View {
         }
         .frame(minWidth: 980, minHeight: 560)
         .onAppear {
-            guard request.reviewNames else { return }
             // For documentation pictures: open on the review with one of each kind of decision made.
+            // (Only ever shows the review; with nothing to review it does nothing rather than import.)
+            guard request.reviewNames, !engagement.accountNameConflicts(in: p.tb).isEmpty else { return }
             startImport(p.tb)
             if let found = conflicts, found.count >= 4 {
                 resolutions[found[1].accountID] = AccountNameResolution(.useFileName)

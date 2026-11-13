@@ -51,7 +51,7 @@ public enum GroupingTransfer {
     public static func json(_ list: GroupingList) -> Data {
         var fields = [
             JSONField("fileType", .string(fileType)),
-            JSONField("schemaVersion", .int(1)),
+            JSONField("schemaVersion", .int(2)),
             JSONField("name", .string(list.name)),
         ]
         if !list.entityTypes.isEmpty { fields.append(JSONField("entityTypes", .array(list.entityTypes.map { .string($0) }))) }
@@ -61,9 +61,9 @@ public enum GroupingTransfer {
 
     public static func csv(_ list: GroupingList) -> String {
         var t = ReportTable(title: "", subtitle: "", sheetName: "Groupings", flat: true,
-                            columns: ["Section", "Code", "Name", "ID", "Subgroup Of"].map { .text($0, 100) })
+                            columns: ["Section", "Code", "Name", "Account Type", "ID", "Subgroup Of"].map { .text($0, 100) })
         for g in list.groupings {
-            t.rows.append(ReportRow(id: g.id, cells: [g.section, g.code, g.name, g.id, g.parent ?? ""].map { .text($0) }))
+            t.rows.append(ReportRow(id: g.id, cells: [g.section, g.code, g.name, g.type?.label ?? "", g.id, g.parent ?? ""].map { .text($0) }))
         }
         return Exporter.csv(t)
     }
@@ -101,6 +101,8 @@ public enum GroupingTransfer {
                 out.append(try Store.decodeGrouping(item, path: "groupings[\(i)]", defaultSection: DefaultGroupings.sectionOther))
             }
             guard !out.isEmpty else { throw TBError("\(name) has no groupings in it.") }
+            // A list exported before groupings had account types (schema 1) takes the built-in types where it matches the built-in list.
+            if ((root["schemaVersion"] as? Int) ?? 1) < 2 { out = Engagement.fillingStandardTypes(out) }
             var list = GroupingList(name: (root["name"] as? String) ?? name, groupings: Engagement.mergingSharedCodes(unique(out)))
             list.entityTypes = ((root["entityTypes"] as? [Any]) ?? []).compactMap { $0 as? String }
             return list
@@ -115,12 +117,14 @@ public enum GroupingTransfer {
             let cells = row.map(norm)
             return cells.contains { $0 == "code" || $0.contains("grouping") || $0 == "name" || $0 == "description" || $0.contains("tax line") }
         }
-        var code: Int?, nameCol: Int?, section: Int?, id: Int?, parent: Int?
+        var code: Int?, nameCol: Int?, section: Int?, id: Int?, parent: Int?, type: Int?
         if let h = headerAt {
             for (i, raw) in rows[h].enumerated() {
                 let c = norm(raw)
                 if c.contains("subgroup") || c.contains("parent") {
                     if parent == nil { parent = i }
+                } else if c == "type" || c.contains("account type") {
+                    if type == nil { type = i }
                 } else if c == "id" || c.hasSuffix(" id") {
                     if id == nil { id = i }
                 } else if c.contains("section") || c.contains("category") || c.contains("schedule") || c.contains("form") {
@@ -152,7 +156,8 @@ public enum GroupingTransfer {
             // A subgroup may leave its code blank; everything else needs a code and a name.
             if n.isEmpty || (c.isEmpty && under.isEmpty) { continue }
             let own = cell(id).isEmpty ? (c.isEmpty ? "\(under)/\(Engagement.slug(n).uppercased())" : c) : cell(id)
-            out.append(Grouping(id: own, code: c, name: n, section: lastSection, parent: under.isEmpty ? nil : under))
+            out.append(Grouping(id: own, code: c, name: n, section: lastSection, parent: under.isEmpty ? nil : under,
+                                type: AccountType.parse(cell(type))))
         }
         guard !out.isEmpty else { throw TBError("\(name): no groupings found. Each row needs a code and a name.") }
         out = unique(out)

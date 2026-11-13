@@ -97,7 +97,7 @@ public enum ChartTransfer {
     public static func json(_ c: ChartData) -> Data {
         let doc = JSONValue.object([
             JSONField("fileType", .string(fileType)),
-            JSONField("schemaVersion", .int(1)),
+            JSONField("schemaVersion", .int(2)),
             JSONField("name", .string(c.name)),
             JSONField("exportedAt", .string(Timestamp.now())),
             JSONField("accounts", .array(c.accounts.map { x in
@@ -155,6 +155,7 @@ public enum ChartTransfer {
             for (i, item) in ((root["groupings"] as? [Any]) ?? []).enumerated() {
                 groupings.append(try Store.decodeGrouping(item, path: "groupings[\(i)]"))
             }
+            if ((root["schemaVersion"] as? Int) ?? 1) < 2 { groupings = Engagement.fillingStandardTypes(groupings) }
             groupings = Engagement.mergingSharedCodes(groupings)  // charts exported before codes had to be unique
             let byID = Dictionary(groupings.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             var accounts: [ChartData.Entry] = []

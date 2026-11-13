@@ -133,13 +133,18 @@ public struct Grouping: Equatable, Identifiable, Sendable {
     /// Set on a subgroup: the id of the grouping it sits under. Subgroups go one level deep, take
     /// their section from the parent, and may leave the code blank to use the parent's.
     public var parent: String?
+    /// The kind of account that belongs here (L01 · CASH holds assets). Accounts given this
+    /// grouping take the type, and the data check reports any that differ. Nil means any type
+    /// (a memo line). A subgroup has none of its own: it uses its grouping's.
+    public var type: AccountType?
 
-    public init(id: String, code: String, name: String, section: String, parent: String? = nil) {
+    public init(id: String, code: String, name: String, section: String, parent: String? = nil, type: AccountType? = nil) {
         self.id = id
         self.code = code
         self.name = name
         self.section = section
         self.parent = parent
+        self.type = type
     }
 
     public var display: String { code.isEmpty ? name : "\(code) · \(name)" }

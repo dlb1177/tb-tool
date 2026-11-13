@@ -6,7 +6,7 @@ import Foundation
 /// two-decimal numbers split into debit / credit, one record per line, in a fixed key order.
 public enum Store {
     public static let fileType = "trial-balance"
-    public static let schemaVersion = 3
+    public static let schemaVersion = 4
 
     private static let knownKeys: Set<String> = [
         "fileType", "schemaVersion", "name", "periodEnd", "binder", "groupingListName", "rolledForwardFrom",
@@ -164,6 +164,7 @@ public enum Store {
             JSONField("section", .string(g.section)),
         ]
         if let parent = g.parent { fields.append(JSONField("parent", .string(parent))) }
+        if let type = g.type { fields.append(JSONField("type", .string(type.rawValue))) }
         return .object(fields)
     }
 
@@ -175,7 +176,8 @@ public enum Store {
         let name = o.optString("name")
         let id = o.optString("id", default: code.isEmpty ? name : code)
         guard !id.isEmpty else { throw TBError("\(path): a grouping needs an id, a code or a name.") }
-        return Grouping(id: id, code: code, name: name, section: o.optString("section", default: defaultSection), parent: parent)
+        return Grouping(id: id, code: code, name: name, section: o.optString("section", default: defaultSection), parent: parent,
+                        type: AccountType(rawValue: o.optString("type")))
     }
 
     // MARK: Decode
@@ -215,6 +217,8 @@ public enum Store {
         for (i, item) in root.array("groupings").enumerated() {
             e.groupings.append(try decodeGrouping(item, path: "groupings[\(i)]"))
         }
+        // Files from before groupings had account types: the built-in groupings take the built-in types.
+        if version < 4 { e.groupings = Engagement.fillingStandardTypes(e.groupings) }
 
         for (i, item) in root.array("accounts").enumerated() {
             let o = try JSONObject(item, "accounts[\(i)]")

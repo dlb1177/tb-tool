@@ -75,11 +75,15 @@ enum Snapshotter {
                 }))
                 steps.append(("grouping-editor", {
                     Windows.shared.closeAll()
-                    let g = sub ?? pick
-                    model.showGroupingEditor(GroupingDraft(g), sections: e.groupingSections)
+                    model.showGroupingEditor(GroupingDraft(pick), sections: e.groupingSections)
                 }))
             }
         }
+        steps.append(("type-review", {
+            Windows.shared.closeAll()
+            model.selection = .accounts
+            model.showTypeReview()
+        }))
         steps.append(("settings", {
             Windows.shared.closeAll()
             model.showSettings()

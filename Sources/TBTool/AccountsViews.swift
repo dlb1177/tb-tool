@@ -69,6 +69,7 @@ struct AccountsView: View {
                 }
                 Divider()
                 DraftBanner()
+                TypeConflictBanner()
                 filterBar(e)
                 Divider()
                 bulkBar(e, picked: picked, shown: shown)
@@ -228,9 +229,11 @@ struct AccountsView: View {
             .popover(isPresented: $showPicker, arrowEdge: .bottom) {
                 GroupingPicker(engagement: e, count: picked.count) { id in
                     let ids = picked
-                    model.mutate("Set Grouping") { $0.setGrouping(id, forAccounts: ids) }
+                    var retyped = 0
+                    model.mutate("Set Grouping") { retyped = $0.setGrouping(id, forAccounts: ids) }
                     model.status = id == nil ? "Cleared the grouping of \(ids.count) accounts"
-                                             : "Grouped \(ids.count) account\(ids.count == 1 ? "" : "s") as \(e.groupingLabel(id))"
+                        : "Grouped \(ids.count) account\(ids.count == 1 ? "" : "s") as \(e.groupingLabel(id))"
+                          + (retyped > 0 ? " — \(retyped) became \(e.groupingType(id)?.label.lowercased() ?? "") account\(retyped == 1 ? "" : "s") to match" : "")
                     showPicker = false
                 }
             }
@@ -285,7 +288,11 @@ struct AccountsView: View {
                     groupingMenu(e) { id in
                         // Acting on a selected row applies to the whole selection.
                         let ids = selection.contains(r.id) ? selection : [r.id]
-                        model.mutate("Set Grouping") { $0.setGrouping(id, forAccounts: ids) }
+                        var retyped = 0
+                        model.mutate("Set Grouping") { retyped = $0.setGrouping(id, forAccounts: ids) }
+                        if retyped > 0 {
+                            model.status = "\(retyped) account\(retyped == 1 ? "" : "s") became \(e.groupingType(id)?.label.lowercased() ?? "") to match \(e.groupingLabel(id))"
+                        }
                     }
                 } label: {
                     if r.grouping.isEmpty {
@@ -468,6 +475,7 @@ struct GroupingsView: View {
                     }
                 }
                 Divider()
+                TypeConflictBanner()
                 if let (code, sharing) = e.sharedGroupingCodes.first {
                     // A file from before every code had to be unique.
                     HStack(spacing: 10) {
@@ -507,6 +515,14 @@ struct GroupingsView: View {
                         .padding(.leading, r.depth > 0 ? 14 : 0)
                     }
                     .width(min: 200, ideal: 360)
+                    TableColumn("Account Type") { r in
+                        if r.depth == 0 {
+                            Text(r.grouping.type?.label ?? "Any").foregroundStyle(r.grouping.type == nil ? HierarchicalShapeStyle.tertiary : HierarchicalShapeStyle.primary)
+                        } else {
+                            Text(e.groupingType(r.id)?.label ?? "Any").foregroundStyle(.tertiary)
+                        }
+                    }
+                    .width(min: 80, ideal: 100, max: 130)
                     TableColumn("Accounts") { r in
                         // A grouping counts the accounts in its subgroups too.
                         let n = (own[r.id] ?? 0) + (r.depth == 0 ? e.subgroups(of: r.id).map { own[$0.id] ?? 0 }.reduce(0, +) : 0)
@@ -549,11 +565,15 @@ struct GroupingDraft: Identifiable {
     var section: String
     /// Set for a subgroup: the grouping it sits under.
     var parent: String? = nil
+    /// The kind of account that belongs in the grouping; nil for any.
+    var type: AccountType? = nil
+    /// False on a new grouping until its type has been chosen (or "any type" has).
+    var typeChosen = false
 }
 
 extension GroupingDraft {
     init(_ g: Grouping) {
-        self.init(groupingID: g.id, code: g.code, name: g.name, section: g.section, parent: g.parent)
+        self.init(groupingID: g.id, code: g.code, name: g.name, section: g.section, parent: g.parent, type: g.type, typeChosen: true)
     }
 }
 
@@ -603,6 +623,31 @@ struct GroupingSheet: View {
                 }
                 TextField("Code", text: $draft.code, prompt: Text(parent.map { "Optional — blank uses \($0.code)" } ?? ""))
                 TextField("Name", text: $draft.name)
+                if let parent {
+                    LabeledContent("Account type") {
+                        Text("\(parent.type?.label ?? "Any type") — the same as \(parent.code)").foregroundStyle(.secondary)
+                    }
+                } else {
+                    Picker("Account type", selection: Binding(get: { draft.typeChosen ? (draft.type?.rawValue ?? "any") : "" }, set: { tag in
+                        draft.typeChosen = !tag.isEmpty
+                        draft.type = AccountType(rawValue: tag)
+                    })) {
+                        if !draft.typeChosen { Text("Choose…").tag("") }
+                        ForEach(AccountType.allCases, id: \.self) { Text($0.label).tag($0.rawValue) }
+                        Divider()
+                        Text("Any type (a memo line)").tag("any")
+                    }
+                    .help("The kind of account that belongs in this grouping. Accounts put in it take this type, and the data check reports any that differ.")
+                }
+            }
+            if parent == nil, let id = draft.groupingID, draft.typeChosen, let type = draft.type, type != e.grouping(id)?.type {
+                let inside = Set([id] + e.subgroups(of: id).map(\.id))
+                let n = e.accounts.filter { $0.grouping.map(inside.contains) ?? false && $0.type != type }.count
+                if n > 0 {
+                    Label("\(n) account\(n == 1 ? "" : "s") in this grouping will become \(type.label.lowercased()) account\(n == 1 ? "" : "s").", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
             }
             if let parent {
                 Text("Shown nested under \(parent.display) in the grouping reports. Its accounts are included in that grouping's total. Leave the code blank to report under \(parent.code); a code of its own must not be used anywhere else in the list.")
@@ -620,16 +665,18 @@ struct GroupingSheet: View {
                         ok = commit(draft)
                     } else if let id = draft.groupingID {
                         ok = model.mutate("Edit Grouping") {
-                            try $0.updateGrouping(id, code: draft.code, name: draft.name, section: draft.section, parent: draft.parent)
+                            try $0.updateGrouping(id, code: draft.code, name: draft.name, section: draft.section, parent: draft.parent, type: draft.type)
                         }
                     } else {
                         ok = model.mutate(draft.parent == nil ? "Add Grouping" : "Add Subgroup") {
-                            _ = try $0.addGrouping(code: draft.code, name: draft.name, section: draft.section, parent: draft.parent)
+                            _ = try $0.addGrouping(code: draft.code, name: draft.name, section: draft.section, parent: draft.parent, type: draft.type)
                         }
                     }
                     if ok { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(draft.parent == nil && !draft.typeChosen)
+                .help(draft.parent == nil && !draft.typeChosen ? "Choose the account type first" : "")
             }
         }
         .padding(20)
