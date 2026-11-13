@@ -229,7 +229,7 @@ public struct Reports {
         for section in e.groupingSections {
             var rows: [ReportRow] = []
             var sectionTotal = zero
-            for g in e.groupings where g.section == section && e.parentGrouping(of: g) == nil {
+            for g in e.topGroupings(in: section) {
                 let direct = members[g.id] ?? []
                 let subs = e.subgroups(of: g.id).compactMap { s in members[s.id].map { (s, $0) } }
                 if direct.isEmpty && subs.isEmpty { continue }

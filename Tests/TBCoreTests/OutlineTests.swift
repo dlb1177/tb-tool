@@ -38,11 +38,11 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(office.id, "808/OFFICE")
         XCTAssertEqual(office.section, DefaultGroupings.section8825)  // taken from the parent
         XCTAssertEqual(fees.section, DefaultGroupings.section8825)
-        XCTAssertEqual(e.subgroups(of: "808").map(\.name), ["Office", "Fees"])
+        XCTAssertEqual(e.subgroups(of: "808").map(\.name), ["Fees", "Office"])  // the one with a code first, then by name
         XCTAssertEqual(e.parentGrouping(of: office)?.id, "808")
         // They follow their parent in the list, and the outline nests them.
         let at = e.groupings.firstIndex { $0.id == "808" }!
-        XCTAssertEqual(e.groupings[(at + 1)...(at + 2)].map(\.id), [office.id, fees.id])
+        XCTAssertEqual(e.groupings[(at + 1)...(at + 2)].map(\.id), [fees.id, office.id])
         XCTAssertEqual(e.groupingOutline.first { $0.grouping.id == office.id }?.depth, 1)
         XCTAssertEqual(e.groupingOutline.count, e.groupings.count)
         // A blank code reports under the parent's; its own code wins when it has one.
@@ -94,12 +94,12 @@ final class OutlineTests: XCTestCase {
         let ids = summary.rows.map(\.id)
         let at = ids.firstIndex(of: "g:808")!
         // The grouping, then its subgroups indented, then what it holds outside them.
-        XCTAssertEqual(Array(ids[at...(at + 3)]), ["g:808", "g:\(office.id)", "g:\(fees.id)", "g:808:direct"])
+        XCTAssertEqual(Array(ids[at...(at + 3)]), ["g:808", "g:\(fees.id)", "g:\(office.id)", "g:808:direct"])
         XCTAssertEqual(summary.rows[at].cells[1], .text("LEGAL AND PROF FEE"))
-        XCTAssertEqual(summary.rows[at + 1].cells[1], .text("    Office"))
+        XCTAssertEqual(summary.rows[at + 2].cells[1], .text("    Office"))
         XCTAssertEqual(summary.rows[at + 3].cells[1], .text("    Not in a subgroup"))
         XCTAssertEqual(summary.rows[at].groupingID, "808")
-        XCTAssertEqual(summary.rows[at + 2].groupingID, fees.id)
+        XCTAssertEqual(summary.rows[at + 1].groupingID, fees.id)
         XCTAssertEqual(summary.rows[at + 1].parentRowID, "g:808")
         XCTAssertEqual(money(summary, row: "g:808", column: "Consolidated"), expected.sum())
         XCTAssertEqual(money(summary, row: "g:\(office.id)", column: "Consolidated"), expected[0])
@@ -129,13 +129,13 @@ final class OutlineTests: XCTestCase {
         let d = detail.rows.map(\.id)
         let from = d.firstIndex(of: "g:808")!
         XCTAssertEqual(Array(d[from...(from + 7)]), [
-            "g:808", "g:\(office.id)", "g:\(office.id):a:51160", "g:\(fees.id)", "g:\(fees.id):a:51040", "g:\(fees.id):a:51130",
+            "g:808", "g:\(fees.id)", "g:\(fees.id):a:51040", "g:\(fees.id):a:51130", "g:\(office.id)", "g:\(office.id):a:51160",
             "g:808:direct", "g:808:a:51180",
         ])
         XCTAssertEqual(detail.rows[from].style, .subtotal)
-        XCTAssertEqual(detail.rows[from + 2].style, .normal)
-        XCTAssertEqual(detail.rows[from + 2].accountID, "51160")
-        XCTAssertEqual(detail.rows[from + 2].cells[1], .text("        Office Supplies"))
+        XCTAssertEqual(detail.rows[from + 5].style, .normal)
+        XCTAssertEqual(detail.rows[from + 5].accountID, "51160")
+        XCTAssertEqual(detail.rows[from + 5].cells[1], .text("        Office Supplies"))
         XCTAssertEqual(money(detail, row: "g:808", column: "Consolidated"), expected.sum())
         XCTAssertEqual(detail.rows.last?.id, "income")
         // A grouping with no subgroups lists its accounts straight under it.
@@ -156,11 +156,11 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(t.title, "808 · LEGAL AND PROF FEE")
         XCTAssertEqual(t.columns.map(\.title).suffix(3), ["Combined", "Eliminations", "Consolidated"])
         XCTAssertEqual(t.columns.count, 2 + e.entities.count + 3)
-        XCTAssertEqual(t.rows.map(\.id), ["g:\(office.id)", "a:51160", "g:\(fees.id)", "a:51040", "a:51130", "direct", "a:51180", "total"])
+        XCTAssertEqual(t.rows.map(\.id), ["g:\(fees.id)", "a:51040", "a:51130", "g:\(office.id)", "a:51160", "direct", "a:51180", "total"])
         let total = ["51160", "51040", "51130", "51180"].map { ledger.consolidated(.book, account: $0) }.sum()
         XCTAssertEqual(money(t, row: "total", column: "Consolidated"), total)
         XCTAssertEqual(money(t, row: "total", column: "Consolidated"), money(reports.groupingSummary(basis: .book, detail: false), row: "g:808", column: "Consolidated"))
-        XCTAssertEqual(t.rows[1].accountID, "51160")
+        XCTAssertEqual(t.rows[1].accountID, "51040")
         // A subgroup on its own, and a grouping with none: a plain list.
         let sub = reports.groupingAccounts(groupingID: fees.id, basis: .book)
         XCTAssertEqual(sub.title, "808 · LEGAL AND PROF FEE › Fees")
@@ -224,18 +224,19 @@ final class OutlineTests: XCTestCase {
         // A list written by hand: the parent named by its code, the subgroup's own code left blank.
         let sheet = "Section,Code,Name,Subgroup Of\nPage 1,S19,OTHER DEDUCTIONS,\n,,Travel,S19\n,S19B,Meals,S19\nPage 1,S7,OFFICER COMP,\n,,Orphan,NOPE\n"
         let scorp = try GroupingTransfer.fromTable(TBImporter.parseCSV(sheet), name: "S Corp").groupings
-        XCTAssertEqual(scorp.map(\.name), ["OTHER DEDUCTIONS", "Travel", "Meals", "OFFICER COMP", "Orphan"])
-        XCTAssertEqual(scorp.map(\.parent), [nil, "S19", "S19", nil, nil])
-        XCTAssertEqual(scorp[1].id, "S19/TRAVEL")
+        // Whatever order the sheet was in, the list is kept by code: S7 before S19, the subgroup with a code first.
+        XCTAssertEqual(scorp.map(\.name), ["OFFICER COMP", "OTHER DEDUCTIONS", "Meals", "Travel", "Orphan"])
+        XCTAssertEqual(scorp.map(\.parent), [nil, nil, "S19", "S19", nil])
+        XCTAssertEqual(scorp[3].id, "S19/TRAVEL")
         XCTAssertEqual(Set(scorp.map(\.id)).count, 5)
 
         // Imported into another file: the subgroups arrive under their grouping, assignments kept.
         var other = try sample()
         other.setGrouping("808", forAccounts: ["51160"])
         let plan = other.planGroupingImport(list, mode: .merge)
-        XCTAssertEqual(plan.added.map(\.id), [office.id, fees.id])
+        XCTAssertEqual(plan.added.map(\.id), [fees.id, office.id])
         other.applyGroupingImport(plan)
-        XCTAssertEqual(other.subgroups(of: "808").map(\.id), [office.id, fees.id])
+        XCTAssertEqual(other.subgroups(of: "808").map(\.id), [fees.id, office.id])
         XCTAssertEqual(other.issues(), [])
 
         // A chart export carries an account's subgroup into a file that doesn't have it yet.
@@ -245,6 +246,51 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(third.account("51160")?.grouping, office.id)
         XCTAssertEqual(third.parentGrouping(of: third.grouping(office.id)!)?.id, "808")
         XCTAssertEqual(third.issues(), [])
+    }
+
+    // MARK: Groupings keep themselves in order
+
+    func testGroupingsSortByCodeWhereverTheyAreShown() throws {
+        var e = try sample()
+        func codes(_ section: String) -> [String] { e.topGroupings(in: section).map(\.code) }
+        // A new grouping falls into place by its code instead of landing at the end of its section.
+        _ = try e.addGrouping(code: "802B", name: "OTHER RENTAL RECEIPTS", section: DefaultGroupings.section8825)
+        XCTAssertEqual(Array(codes(DefaultGroupings.section8825).prefix(4)), ["802", "802B", "803", "804"])
+        let stored = e.groupings.map(\.id)
+        XCTAssertEqual(stored.firstIndex(of: "802B"), stored.firstIndex(of: "802")! + 1)  // and the file keeps it there
+        // Numbers are read as numbers: 2 before 10, K13A before K13V before K13W.
+        _ = try e.addGrouping(code: "3", name: "GROSS PROFIT", section: DefaultGroupings.sectionPage1)
+        XCTAssertEqual(Array(codes(DefaultGroupings.sectionPage1).prefix(6)), ["1A", "1B", "2", "3", "7", "9"])
+        XCTAssertEqual(codes(DefaultGroupings.sectionPage1).last, "20")
+        XCTAssertEqual(codes(DefaultGroupings.sectionK).filter { $0.hasPrefix("K13") }, ["K13A", "K13V", "K13W"])
+        // Changing a code moves it; the sections themselves stay in the order they were set up.
+        try e.updateGrouping("802B", code: "816", name: "OTHER RENTAL RECEIPTS", section: "")
+        XCTAssertEqual(codes(DefaultGroupings.section8825).last, "816")
+        XCTAssertEqual(e.groupingSections, [DefaultGroupings.section8825, DefaultGroupings.sectionK, DefaultGroupings.sectionPage1,
+                                            DefaultGroupings.sectionL, DefaultGroupings.sectionOther])
+        // Subgroups without codes go by name.
+        XCTAssertEqual(e.subgroups(of: "815").map(\.name), ["AMORTIZATION", "GUARANTEED PAYMENTS", "LAWN CARE", "MANAGEMENT FEES", "MISCELLANEOUS", "OFFICE EXPENSE"])
+        _ = try e.addGrouping(code: "", name: "Bank fees", section: "", parent: "815")
+        XCTAssertEqual(e.subgroups(of: "815").map(\.name).prefix(2), ["AMORTIZATION", "Bank fees"])
+        XCTAssertEqual(e.groupingOutline.map(\.grouping.id), e.groupings.map(\.id))  // what is shown is what is stored
+        XCTAssertEqual(e.issues(), [])
+
+        // The reports follow the same order.
+        e.setGrouping("802B", forAccounts: ["40000"])  // its id is still the one it was created with; its code is now 816
+        e.setGrouping("803", forAccounts: ["51000"])
+        e.setGrouping("802", forAccounts: ["42000"])
+        func reportCodes(_ x: Engagement) -> [String] {
+            Reports(x).groupingSummary(basis: .book, detail: false).rows.compactMap(\.groupingID).map { x.groupingCode($0) }
+        }
+        XCTAssertEqual(reportCodes(e), ["802", "803", "816"])
+
+        // A file whose list was saved out of order (by an earlier version, or by hand) is shown in order anyway.
+        var old = e
+        old.groupings = e.groupingSections.flatMap { section in e.groupings.filter { $0.section == section }.reversed() }
+        XCTAssertNotEqual(old.groupings, e.groupings)
+        XCTAssertEqual(old.groupingOutline.map(\.grouping.id), e.groupingOutline.map(\.grouping.id))
+        XCTAssertEqual(reportCodes(old), ["802", "803", "816"])
+        XCTAssertEqual(Reports(old).groupingSummary(basis: .book, detail: true).rows.map(\.id), Reports(e).groupingSummary(basis: .book, detail: true).rows.map(\.id))
     }
 
     // MARK: One code, one grouping
@@ -312,7 +358,7 @@ final class OutlineTests: XCTestCase {
         // Names with nothing in common still combine, under a plainly labelled grouping.
         let odd = Engagement.mergingSharedCodes([Grouping(id: "A", code: "7", name: "RENT", section: "P"), Grouping(id: "B", code: "7", name: "OTHER INCOME", section: "P"),
                                                  Grouping(id: "C", code: "9", name: "WAGES", section: "P")])
-        XCTAssertEqual(odd.map(\.name), ["7 (combined)", "RENT", "OTHER INCOME", "WAGES"])
+        XCTAssertEqual(odd.map(\.name), ["7 (combined)", "OTHER INCOME", "RENT", "WAGES"])
         XCTAssertEqual(odd.map(\.parent), [nil, "7", "7", nil])
         XCTAssertTrue(Engagement.sharedCodes(odd).isEmpty)
         // A subgroup that repeats its grouping's code simply uses it.
@@ -357,7 +403,10 @@ final class OutlineTests: XCTestCase {
         XCTAssertTrue(GroupingLibrary.isStandardChanged(in: dir))
         XCTAssertEqual(GroupingLibrary.standard(in: dir).groupings.count, DefaultGroupings.list.count + 1)
         XCTAssertEqual(GroupingLibrary.standard(in: dir).entityTypes, [partnership])
-        XCTAssertEqual(GroupingLibrary.list(forEntityType: partnership, in: dir).groupings.last?.code, "K20")
+        // Saved lists are kept in order too: the new line sits at the end of Schedule K, not at the end of the list.
+        let saved = GroupingLibrary.list(forEntityType: partnership, in: dir).groupings
+        XCTAssertEqual(saved.last { $0.section == DefaultGroupings.sectionK }?.code, "K20")
+        XCTAssertEqual(saved.last?.code, "MEM")
         GroupingLibrary.delete(named: GroupingList.standardName, in: dir)
         XCTAssertFalse(GroupingLibrary.isStandardChanged(in: dir))
         XCTAssertEqual(GroupingLibrary.standard(in: dir).groupings, DefaultGroupings.list)

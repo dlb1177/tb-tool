@@ -166,9 +166,27 @@ extension Engagement {
         return p
     }
 
+    /// A grouping's subgroups, in order (see `groupingPrecedes`).
     public func subgroups(of id: String) -> [Grouping] {
         guard let p = groupings.first(where: { $0.id == id }), p.parent == nil else { return [] }
-        return groupings.filter { $0.parent == id && $0.id != id }
+        return groupings.filter { $0.parent == id && $0.id != id }.sorted(by: Engagement.groupingPrecedes)
+    }
+
+    /// The groupings of one section (not their subgroups), in order by code.
+    public func topGroupings(in section: String) -> [Grouping] {
+        groupings.filter { $0.section == section && parentGrouping(of: $0) == nil }.sorted(by: Engagement.groupingPrecedes)
+    }
+
+    /// The order groupings are always shown in within a section, and subgroups within a grouping:
+    /// by code, reading numbers as numbers (802, 802B, 803 … 9, 10), then by name. Subgroups that
+    /// have no code of their own follow the ones that do, by name.
+    public static func groupingPrecedes(_ a: Grouping, _ b: Grouping) -> Bool {
+        if a.code.isEmpty != b.code.isEmpty { return !a.code.isEmpty }
+        let byCode = a.code.compare(b.code, options: [.numeric, .caseInsensitive])
+        if byCode != .orderedSame { return byCode == .orderedAscending }
+        let byName = a.name.compare(b.name, options: [.numeric, .caseInsensitive])
+        if byName != .orderedSame { return byName == .orderedAscending }
+        return a.id < b.id
     }
 
     /// The grouping list as an outline: each section's groupings in list order, every one followed
@@ -176,7 +194,7 @@ extension Engagement {
     public var groupingOutline: [(grouping: Grouping, depth: Int)] {
         var out: [(Grouping, Int)] = []
         for section in groupingSections {
-            for g in groupings where g.section == section && parentGrouping(of: g) == nil {
+            for g in topGroupings(in: section) {
                 out.append((g, 0))
                 for sub in subgroups(of: g.id) { out.append((sub, 1)) }
             }
@@ -315,16 +333,8 @@ extension Engagement {
         }
         guard !groupings.contains(where: { $0.id == id }) else { throw TBError("That grouping already exists.") }
         let g = Grouping(id: id, code: code, name: name, section: section.isEmpty ? DefaultGroupings.sectionOther : section, parent: parent)
-        if let parent {
-            // Straight after its parent and the subgroups already there.
-            let at = groupings.lastIndex { $0.id == parent || $0.parent == parent } ?? groupings.count - 1
-            groupings.insert(g, at: at + 1)
-        } else if let last = groupings.lastIndex(where: { $0.section == g.section }) {
-            // Keep it next to the rest of its section.
-            groupings.insert(g, at: last + 1)
-        } else {
-            groupings.append(g)
-        }
+        // It falls into place by code within its section (or among its grouping's subgroups).
+        groupings = Engagement.tidiedGroupings(groupings + [g])
         return g
     }
 
@@ -388,9 +398,15 @@ extension Engagement {
             }
             return x
         }
-        guard fixed.contains(where: { $0.parent != nil }) else { return fixed }
+        // Sections stay in the order they first appear; inside a section groupings are kept in
+        // order by code, each followed by its subgroups, so a new or renamed one falls into place.
+        var sections: [String] = []
+        for g in fixed where g.parent == nil && !sections.contains(g.section) { sections.append(g.section) }
         let children = Dictionary(grouping: fixed.filter { $0.parent != nil }, by: { $0.parent! })
-        fixed = fixed.filter { $0.parent == nil }.flatMap { [$0] + (children[$0.id] ?? []) }
+        fixed = sections.flatMap { section in
+            fixed.filter { $0.parent == nil && $0.section == section }.sorted(by: groupingPrecedes)
+                .flatMap { [$0] + (children[$0.id] ?? []).sorted(by: groupingPrecedes) }
+        }
         return fixed
     }
 

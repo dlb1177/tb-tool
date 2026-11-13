@@ -542,6 +542,12 @@ in each. A grouping's count includes its subgroups.
 
 ![Editing a subgroup](images/grouping-editor.png)
 
+**Order.** The list keeps itself in order. Within each section, groupings are sorted by code,
+reading numbers as numbers (802, 802B, 803 … and 2 before 10). Subgroups are sorted the same
+way within their grouping; those with no code of their own follow, by name. A new grouping
+falls into place as soon as you add it, and changing a code moves it. Every picker and every
+report uses the same order. Sections stay in the order they were set up.
+
 **Rules for codes and subgroups:**
 
 - **Every code is used once.** No two groupings, and no two subgroups, can have the same code.

@@ -101,6 +101,7 @@ public enum DefaultGroupings {
         add(sectionL, "L21", "PARTNER CAPITAL")
 
         add(sectionOther, "MEM", "MEMO ACCOUNT")
-        return out
+        // Kept the way every list is kept: by code within each section, subgroups by name.
+        return Engagement.tidiedGroupings(out)
     }()
 }

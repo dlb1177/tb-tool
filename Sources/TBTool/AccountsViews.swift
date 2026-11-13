@@ -579,7 +579,7 @@ struct GroupingSheet: View {
                     Text("None — a grouping of its own").tag(String?.none)
                     ForEach(e.groupingSections, id: \.self) { section in
                         Section(section) {
-                            ForEach(e.groupings.filter { $0.section == section && $0.parent == nil && $0.id != draft.groupingID }) { g in
+                            ForEach(e.topGroupings(in: section).filter { $0.id != draft.groupingID }) { g in
                                 Text(g.display).tag(String?.some(g.id))
                             }
                         }

@@ -351,13 +351,7 @@ extension Engagement {
     }
 
     public mutating func applyChartImport(_ plan: ChartImportPlan) {
-        for g in plan.newGroupings where !groupings.contains(where: { $0.id == g.id }) {
-            if let last = groupings.lastIndex(where: { $0.section == g.section }) {
-                groupings.insert(g, at: last + 1)
-            } else {
-                groupings.append(g)
-            }
-        }
+        for g in plan.newGroupings where !groupings.contains(where: { $0.id == g.id }) { groupings.append(g) }
         groupings = Engagement.mergingSharedCodes(groupings)
         for c in plan.changes {
             updateAccount(c.accountID) {
