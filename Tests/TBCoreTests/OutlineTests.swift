@@ -319,7 +319,6 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(e.account("51040")?.type, .expense)
         _ = e.applyGroupingMap(csv: "49600,L08\n")
         XCTAssertEqual(e.account("49600")?.type, .asset)
-        XCTAssertEqual(e.typeConflicts, [])
         XCTAssertEqual(e.issues(), [])
 
         // A new grouping is given its type; a subgroup never has one of its own.
@@ -347,62 +346,79 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(try GroupingTransfer.fromTable(TBImporter.parseCSV(GroupingTransfer.csv(list)), name: "x").groupings, e.groupings)
     }
 
-    func testAccountTypeConflictsAreFoundAndSettledByGrouping() throws {
+    func testAnAccountsTypeCanOnlyComeFromItsGrouping() throws {
         var e = try sample()
-        e.setGrouping("L01", forAccounts: ["10001", "10003", "10005"])
+        e.setGrouping("L01", forAccounts: ["10001", "10003"])
         e.setGrouping("815-MGMT", forAccounts: ["51155"])
-        e.setGrouping("815", forAccounts: ["51180"])
-        e.setGrouping("807", forAccounts: ["51080"])
-        // Types changed afterwards (on the Accounts screen, by an import, or in the file by hand) can disagree.
+        /// True when every grouped account has exactly its grouping's type.
+        func consistent(_ x: Engagement) -> Bool {
+            x.accounts.allSatisfy { a in x.groupingType(a.grouping).map { $0 == a.type } ?? true }
+        }
+        XCTAssertTrue(consistent(e))
+
+        // There is no way to give a grouped account another type: the grouping's stands.
         e.updateAccount("10003") { $0.type = .expense }
-        e.updateAccount("51155") { $0.type = .asset }
-        e.updateAccount("51080") { $0.type = .liability }
-        let conflicts = e.typeConflicts
-        XCTAssertEqual(conflicts.map(\.groupingID), ["807", "815", "L01"])  // in list order; a subgroup's accounts under its grouping
-        XCTAssertEqual(conflicts[1].groupingType, .expense)
-        XCTAssertEqual(conflicts[1].accounts.map(\.id), ["51155", "51180"])
-        XCTAssertEqual(conflicts[1].mismatched.map(\.id), ["51155"])
-        XCTAssertEqual(conflicts[2].mismatched.map(\.id), ["10003"])
-        XCTAssertEqual(e.issues().count, 3)
-        XCTAssertTrue(e.issues()[2].hasPrefix("L01 · CASH is for asset accounts, but 1 of its accounts has another type (10003"))
+        XCTAssertEqual(e.account("10003")?.type, .asset)
+        e.updateAccount("51155") {
+            $0.type = .asset
+            $0.name = "Management Fee"
+        }
+        XCTAssertEqual(e.account("51155")?.type, .expense)
+        XCTAssertEqual(e.account("51155")?.name, "Management Fee")  // everything else about the account can change
+        // Moving the account to another grouping is what changes its type.
+        e.updateAccount("51155") { $0.grouping = "L13" }
+        XCTAssertEqual(e.account("51155")?.type, .asset)
+        XCTAssertTrue(consistent(e))
 
-        // Settled one grouping at a time: the accounts take the grouping's type; or the grouping and
-        // everything in it take another; or an account is taken out of the grouping and keeps its own.
-        var fixed = e
-        let changed = fixed.resolveTypeConflicts([
-            "L01": GroupingTypeResolution(type: .asset),
-            "815": GroupingTypeResolution(type: .asset),
-            "807": GroupingTypeResolution(type: .expense, ungroup: ["51080"]),
-        ])
-        XCTAssertEqual(changed, 2)  // 10003 back to asset; 51180 follows 815 to asset
-        XCTAssertEqual(fixed.account("10003")?.type, .asset)
-        XCTAssertEqual(fixed.grouping("815")?.type, .asset)
-        XCTAssertEqual(fixed.account("51155")?.type, .asset)
-        XCTAssertEqual(fixed.account("51180")?.type, .asset)
-        XCTAssertNil(fixed.account("51080")?.grouping)
-        XCTAssertEqual(fixed.account("51080")?.type, .liability)
-        XCTAssertEqual(fixed.typeConflicts, [])
-        XCTAssertEqual(fixed.issues(), [])
-        // Types decide what counts as income, so the fix shows up there.
-        XCTAssertNotEqual(Ledger(e).consolidatedNetIncome(.book), Ledger(fixed).consolidatedNetIncome(.book))
+        // Every way the grouping list can change as a whole leaves the accounts in step with it.
+        var source = try sample()
+        source.setGrouping("L15", forAccounts: ["10001"])          // the other file calls it a payable
+        source.setGrouping("807", forAccounts: ["51080"])
+        var viaChart = e
+        var o = ChartImportOptions()
+        o.overwriteGroupings = true
+        let plan = viaChart.planChartImport(ChartTransfer.chart(of: source), options: o)
+        XCTAssertEqual(plan.changes.first { $0.accountID == "10001" }?.newType, .liability)  // and the preview says so
+        viaChart.applyChartImport(plan)
+        XCTAssertEqual(viaChart.account("10001")?.type, .liability)
+        XCTAssertTrue(consistent(viaChart))
 
-        // A file from before groupings had types: the built-in groupings take the built-in types on opening,
-        // a grouping of your own stays "any type", and accounts that disagree are reported, not changed.
+        var relisted = e
+        var list = GroupingTransfer.list(of: e)
+        list.groupings[list.groupings.firstIndex { $0.id == "L01" }!].type = .equity
+        relisted.applyGroupingImport(relisted.planGroupingImport(list, mode: .replace))
+        XCTAssertEqual(relisted.account("10001")?.type, .equity)
+        XCTAssertTrue(consistent(relisted))
+        relisted.resetGroupingsToDefault()
+        XCTAssertEqual(relisted.account("10001")?.type, .asset)
+        XCTAssertTrue(consistent(relisted))
+
+        // A file that says otherwise — edited by hand, or from before the type came from the grouping —
+        // is put right when it is opened. A grouping with no type leaves its accounts as they are.
         var old = try sample()
         _ = try old.addGrouping(code: "X1", name: "STORAGE UNITS", section: DefaultGroupings.sectionOther)
         old.setGrouping("L01", forAccounts: ["10001"])
         old.setGrouping("X1", forAccounts: ["14150"])
-        old.updateAccount("10001") { $0.type = .expense }
         var json = String(data: Store.encode(old), encoding: .utf8)!
         json = json.replacingOccurrences(of: "\"schemaVersion\": 4", with: "\"schemaVersion\": 3")
         json = json.replacingOccurrences(of: #", "type": "(asset|liability|equity|revenue|expense)" \}"#, with: " }", options: .regularExpression)
+        json = json.replacingOccurrences(of: "\"name\": \"Ashford Checking (1042) - 2\", \"type\": \"asset\"", with: "\"name\": \"Ashford Checking (1042) - 2\", \"type\": \"expense\"")
         XCTAssertFalse(json.contains("\"section\": \"Sch. L Accounts\", \"type\""))
+        let asWritten = try Store.decode(Data(json.utf8), aligningTypes: false)
+        XCTAssertEqual(asWritten.account("10001")?.type, .expense)
+        XCTAssertEqual(asWritten.grouping("L01")?.type, .asset)  // the built-in groupings take the built-in types
+        XCTAssertNil(asWritten.grouping("X1")?.type)             // one of your own is "any type" until you say
+        var counted = asWritten
+        XCTAssertEqual(counted.alignAccountTypes(), 1)
         let opened = try Store.decode(Data(json.utf8))
-        XCTAssertEqual(opened.grouping("L01")?.type, .asset)
-        XCTAssertNil(opened.grouping("X1")?.type)
-        XCTAssertEqual(opened.account("10001")?.type, .expense)
-        XCTAssertEqual(opened.typeConflicts.map(\.groupingID), ["L01"])
-        XCTAssertEqual(opened.groupings.filter { $0.type != nil }.count, DefaultGroupings.list.filter { $0.type != nil }.count)
+        XCTAssertEqual(opened.account("10001")?.type, .asset)
+        XCTAssertEqual(opened.account("14150")?.type, .asset)
+        XCTAssertTrue(consistent(opened))
+        XCTAssertEqual(opened, counted)
+        XCTAssertEqual(opened.issues(), [])
+        // Types decide what counts as income, so the file's figures follow the groupings.
+        XCTAssertNotEqual(Ledger(asWritten).netIncome(.book, entity: "ashford"), Ledger(opened).netIncome(.book, entity: "ashford"))
+        XCTAssertEqual(Ledger(opened).netIncome(.book, entity: "ashford"), Ledger(try sample()).netIncome(.book, entity: "ashford"))
     }
 
     // MARK: Accounts with no grouping

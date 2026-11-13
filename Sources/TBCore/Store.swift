@@ -182,7 +182,10 @@ public enum Store {
 
     // MARK: Decode
 
-    public static func decode(_ data: Data) throws -> Engagement {
+    /// Reads a file. Every account comes out with the type of its grouping, whatever the file
+    /// says (a file edited by hand, or written before the type came from the grouping). Pass
+    /// `aligningTypes: false` to see the file exactly as written.
+    public static func decode(_ data: Data, aligningTypes: Bool = true) throws -> Engagement {
         let any: Any
         do {
             any = try JSONSerialization.jsonObject(with: data)
@@ -269,6 +272,7 @@ public enum Store {
         e.extras = root.dict.keys.sorted()
             .filter { !knownKeys.contains($0) }
             .map { JSONField($0, JSONValue.from(any: root.dict[$0]!)) }
+        if aligningTypes { e.alignAccountTypes() }
         return e
     }
 

@@ -154,11 +154,13 @@ extension Engagement {
         var a = accounts[i]
         change(&a)
         a.id = id
+        // The type isn't the account's to choose: its grouping decides it.
+        if let type = groupingType(a.grouping) { a.type = type }
         accounts[i] = a
     }
 
-    /// Puts accounts in a grouping (or, with nil, takes them out). An account takes the account
-    /// type its grouping calls for, so the two can't disagree. Returns how many types changed.
+    /// Puts accounts in a grouping (or, with nil, takes them out). An account's type is its
+    /// grouping's, so it changes with the grouping. Returns how many types changed.
     @discardableResult
     public mutating func setGrouping(_ groupingID: String?, forAccounts ids: Set<String>) -> Int {
         for i in accounts.indices where ids.contains(accounts[i].id) {
@@ -261,6 +263,7 @@ extension Engagement {
     public mutating func mergeSharedGroupingCodes() -> Int {
         let before = groupings.filter { $0.parent != nil }.count
         groupings = Engagement.mergingSharedCodes(groupings)
+        alignAccountTypes()
         return groupings.filter { $0.parent != nil }.count - before
     }
 
@@ -444,6 +447,7 @@ extension Engagement {
         for i in accounts.indices {
             if let g = accounts[i].grouping, !ids.contains(g) { accounts[i].grouping = nil }
         }
+        alignAccountTypes()
     }
 
     public func resolveGrouping(_ text: String) -> Grouping? {
@@ -740,11 +744,6 @@ extension Engagement {
             if let g = a.grouping, !groupingIDs.contains(g) {
                 out.append("Account \(a.id) points at grouping “\(g)”, which isn't in the grouping list.")
             }
-        }
-        for c in typeConflicts {
-            let g = groupingLabel(c.groupingID)
-            let list = c.mismatched.prefix(3).map { "\($0.display) is \($0.type.label.lowercased())" }.joined(separator: "; ")
-            out.append("\(g) is for \(c.groupingType.label.lowercased()) accounts, but \(c.mismatched.count) of its accounts \(c.mismatched.count == 1 ? "has" : "have") another type (\(list)\(c.mismatched.count > 3 ? "; …" : "")). Review Account Types settles it.")
         }
         for (code, sharing) in sharedGroupingCodes {
             out.append("Code \(code) is used by \(sharing.count) groupings (\(sharing.prefix(3).map(\.name).joined(separator: ", "))\(sharing.count > 3 ? ", …" : "")). Every code should be used once: on the Grouping List screen, choose Combine as Subgroups, or change the codes.")

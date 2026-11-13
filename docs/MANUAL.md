@@ -87,9 +87,12 @@ and on screen (credits are shown in brackets). A column of a trial balance total
 is in balance.
 
 **Groupings.** A grouping is a tax line or lead-schedule line (`L01 · CASH`) that accounts roll
-up to. Groupings belong to sections ("Sch. L Accounts"). A grouping can have **subgroups**, and
-it says what **type of account** belongs in it (cash is an asset). Each file carries its own
-grouping list.
+up to. Groupings belong to sections ("Sch. L Accounts"). A grouping can have **subgroups**.
+Each file carries its own grouping list.
+
+**Account types come from groupings.** Every grouping has an account type (cash is an asset),
+and an account in that grouping has that type. The type is never chosen on the account itself,
+so the two cannot disagree.
 
 **The current year and prior periods.** The year of the file's year end is the current year.
 Prior years' closing balances can be stored beside it and are shown as **PP1** (one year
@@ -505,20 +508,28 @@ then:
 
 - **Apply Grouping…** (⌘G): type a code or a name (`L01`, `cash`, `815 mgmt`) and press Return
   to apply the first match.
-- **Set Type**, **Clear Grouping**, **Delete…**.
+- **Clear Grouping**, **Delete…**.
 
-**Changing one:** the Type and Grouping cells are menus. Using one on a selected row applies to
-the whole selection.
+**Changing one:** the Grouping cell is a menu. Using it on a selected row applies to the whole
+selection.
 
-**Account types** are asset, liability, equity, revenue and expense. On import the type is read
-from the file's own type column if it has one, otherwise guessed from the leading digit of the
-number (1 asset, 2 liability, 3 equity, 4 revenue, 5 to 9 expense), otherwise from the name.
-Net income is computed from the revenue and expense accounts, so the types matter.
+**Account types** are asset, liability, equity, revenue and expense. Net income is computed
+from the revenue and expense accounts, so the types matter.
 
-**An account takes the type of its grouping.** Putting an account in `L01 · CASH` makes it an
-asset, and the status line says how many types changed. If a type is changed afterwards so
-that it disagrees with the grouping, a banner appears here with **Review Account Types…**
-([section 10](#10-groupings)).
+**An account's type is its grouping's.** The Type column is read-only. There is nothing to set
+on the account: put it in `L01 · CASH` and it is an asset; move it to another grouping and its
+type follows. To change what type a grouping gives its accounts, edit the grouping on the
+Grouping List screen ([section 10](#10-groupings)); every account in it changes together.
+
+An account that has **no grouping yet** shows a provisional type in grey: the one read from the
+file's own type column on import if it had one, otherwise guessed from the leading digit of
+the number (1 asset, 2 liability, 3 equity, 4 revenue, 5 to 9 expense), otherwise from the
+name. It is used until the account is grouped, which is one more reason the ungrouped alert is
+there.
+
+**New Account…** asks for a number, a name and a grouping. The type shown is the grouping's.
+
+![Adding an account](images/new-account.png)
 
 **Deleting** is allowed only for an account with no balances (this year or a prior year) and no
 journal lines.
@@ -534,7 +545,8 @@ and grouping columns. Accounts are matched by number, or by name where they have
 import window previews every change and offers:
 
 - **Apply groupings**, and whether to replace groupings already set in this file;
-- **Apply account types**;
+- **Apply account types to accounts with no grouping** (a grouped account's type always comes
+  from its grouping);
 - **Add accounts this file doesn't have**.
 
 Groupings the source uses that this file's list lacks are brought across.
@@ -559,11 +571,19 @@ way within their grouping; those with no code of their own follow, by name. A ne
 falls into place as soon as you add it, and changing a code moves it. Every picker and every
 report uses the same order. Sections stay in the order they were set up.
 
-**Account type.** Every grouping has an account type: asset, liability, equity, revenue or
-expense, or *Any type* for a memo line. You choose it when you add a grouping (the Add button
-waits until you have), and it is shown in the Account Type column. A subgroup has no type of
-its own; it uses its grouping's. Changing a grouping's type changes the type of every account
-in it, and the editor tells you how many before you save.
+**Account type.** This is the one place account types are decided. Every grouping has an
+account type: asset, liability, equity, revenue or expense. You choose it when you add a
+grouping (the Add button waits until you have), and it is shown in the Account Type column. A
+subgroup has no type of its own; it uses its grouping's. Every account in a grouping has the
+grouping's type, always. Changing a grouping's type changes the type of every account in it,
+and the editor tells you how many before you save.
+
+*Any type* is there for a memo line that holds accounts of every kind. Accounts in such a
+grouping keep the provisional type they were imported with.
+
+When a file is opened whose accounts say otherwise (one from an earlier version of the app, or
+edited by hand), each account takes its grouping's type and the status line says how many
+changed. The same happens when a grouping list or a chart of accounts is imported.
 
 **Rules for codes and subgroups:**
 
@@ -583,28 +603,6 @@ older built-in list had six "815 OTHER - …" lines). Such a file opens normally
 List screen and the data check point it out, and **Combine as Subgroups** puts them under one
 grouping with that code in one undoable step. No account loses its assignment and no total
 changes.
-
-### When account types and groupings disagree
-
-Accounts follow their grouping's type automatically, so a disagreement only arises when a type
-is changed afterwards: on the Accounts screen, by a chart import, by editing the file by hand,
-or in a file from before groupings had types. The data check counts each grouping affected,
-and a banner on the Accounts and Grouping List screens offers **Review Account Types…**.
-
-![Reviewing account types](images/type-review.png)
-
-The review lists each grouping that holds accounts of another type, with what it is set for,
-what it holds, and the accounts that differ with their balances. For each grouping:
-
-- **This grouping and its accounts are** sets one type for the grouping and everything in it
-  (including its subgroups). It starts on the grouping's own type, so the accounts that differ
-  come into line. Choose another type and the grouping itself changes, taking all of its
-  accounts with it.
-- **Take out of the grouping** on an account leaves that account's type alone and ungroups it
-  instead, for an account that was simply put in the wrong place.
-- Each row previews the change ("Expense → Asset").
-
-**Apply** makes every change in one undoable step.
 
 ### Grouping reports
 
@@ -806,8 +804,6 @@ counts the problems; click it to read them. It reports:
 - an account pointing at a grouping that is not in the list;
 - duplicate ids;
 - a code used by more than one grouping;
-- a grouping holding accounts of another type than the grouping's, with a **Review Account
-  Types…** button;
 - accounts that have no grouping, with a **Show Ungrouped Accounts** button (counted as one
   issue however many there are);
 - a subgroup whose grouping is missing;
@@ -903,7 +899,7 @@ entities, entries, accounts or groupings are not.
 |---|---|
 | `id` | The account number, or the name when there is no number. Balances and journal lines refer to it. |
 | `number`, `name` | As shown. |
-| `type` | `asset`, `liability`, `equity`, `revenue`, or `expense`. |
+| `type` | `asset`, `liability`, `equity`, `revenue`, or `expense`. For a grouped account this is always its grouping's type; the app rewrites it to match when the file is opened. For an account with no grouping it is the provisional type from the import. |
 | `grouping` | The id of a grouping or subgroup, or `null`. |
 
 **A grouping**
@@ -914,7 +910,7 @@ entities, entries, accounts or groupings are not.
 | `code` | The code shown. Unique across the list. May be empty on a subgroup. |
 | `name`, `section` | As shown. |
 | `parent` | Optional. On a subgroup, the id of its grouping. |
-| `type` | Optional. The account type that belongs in the grouping: `asset`, `liability`, `equity`, `revenue` or `expense`. Left out for "any type", and on a subgroup (which uses its grouping's). In a file older than version 4, groupings from the built-in list take the built-in types when the file is opened. |
+| `type` | Optional. The account type of every account in the grouping: `asset`, `liability`, `equity`, `revenue` or `expense`. Left out for "any type", and on a subgroup (which uses its grouping's). In a file older than version 4, groupings from the built-in list take the built-in types when the file is opened. |
 
 ### What is and is not stored
 
@@ -1062,7 +1058,9 @@ on one, these are the things to get right.
   - consolidated = the sum of the trial balances' book (or tax) balances + `eliminating`
 - Skip entries with `"pending": true`. They post nothing.
 - An amount is `debit − credit`. Debits are positive.
-- Net income is minus the sum of the `revenue` and `expense` accounts' balances.
+- Net income is minus the sum of the `revenue` and `expense` accounts' balances. An account's
+  type is its grouping's `type` when the grouping has one; read `accounts[].type` only after
+  the app or `tbcli` has saved the file, or work it out from the grouping yourself.
 - An account in a subgroup rolls up to the subgroup's `parent`. A subgroup with an empty `code`
   reports under its parent's code.
 - For figures you do not want to compute yourself, run `tbcli export file.json out.csv` and
@@ -1087,9 +1085,9 @@ on one, these are the things to get right.
 3. Only an `eliminating` entry may name more than one trial balance.
 4. Account ids, trial balance ids, grouping ids and grouping codes are each unique.
 5. A subgroup's `parent` is a grouping that is not itself a subgroup.
-6. An account's `type` matches its grouping's `type` (for a subgroup, its parent's) when the
-   grouping has one. `tbcli map` sets the account's type to match; `tbcli check` reports any
-   that differ.
+6. An account's type is its grouping's `type` (for a subgroup, its parent's) whenever the
+   grouping has one. Don't set `type` on a grouped account: set its `grouping`. The app and
+   `tbcli` rewrite a grouped account's `type` to match whenever they open the file.
 
 ## 19. Troubleshooting
 
@@ -1119,9 +1117,8 @@ or the Accounts screen's Chart menu.
 **The data check says a code is used by several groupings.** The file predates unique codes.
 Grouping List ▸ Combine as Subgroups.
 
-**The data check says a grouping holds accounts of another type.** Open Review Account Types…
-from the data check, the Accounts screen or the Grouping List screen, and choose the type for
-each grouping. See [section 10](#10-groupings).
+**I can't change an account's type.** By design: the type is the grouping's. Change the
+account's grouping, or change the grouping's account type on the Grouping List screen.
 
 **Prior-year columns are not showing.** Use the Prior Periods menu. A stored year shows only if
 it is before the file's current year.

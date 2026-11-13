@@ -702,23 +702,33 @@ struct NewAccountSheet: View {
     @Environment(\.closeWindow) private var dismiss
     @State private var number = ""
     @State private var name = ""
-    @State private var type = AccountType.expense
-    @State private var typeTouched = false
+    @State private var groupingID: String?
 
     var body: some View {
+        let e = model.engagement ?? Engagement(name: "", periodEnd: "")
         VStack(alignment: .leading, spacing: 14) {
             Text("New Account").font(.headline)
             Form {
                 TextField("Number", text: $number)
-                    .onChange(of: number) { _, new in
-                        if !typeTouched { type = AccountType.infer(number: new.trimmingCharacters(in: .whitespaces), name: name) }
-                    }
                 TextField("Name", text: $name)
-                Picker("Type", selection: Binding(get: { type }, set: {
-                    type = $0
-                    typeTouched = true
-                })) {
-                    ForEach(AccountType.allCases, id: \.self) { Text($0.label).tag($0) }
+                Picker("Grouping", selection: $groupingID) {
+                    Text("Not grouped yet").tag(String?.none)
+                    ForEach(e.groupingSections, id: \.self) { section in
+                        Section(section) {
+                            ForEach(e.groupingOutline.filter { $0.grouping.section == section }, id: \.grouping.id) { item in
+                                Text(item.depth == 0 ? item.grouping.display : "      ↳ \(item.grouping.name)").tag(String?.some(item.grouping.id))
+                            }
+                        }
+                    }
+                }
+                // The type is never chosen here: it is the grouping's.
+                LabeledContent("Account type") {
+                    if let type = e.groupingType(groupingID) {
+                        Text("\(type.label) — from its grouping")
+                    } else {
+                        Text("\(AccountType.infer(number: number.trimmingCharacters(in: .whitespaces), name: name).label) for now — set by the grouping once it has one")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             Text("The account joins the shared chart, so every trial balance can use it.")
@@ -729,13 +739,18 @@ struct NewAccountSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Add Account") {
-                    if model.mutate("Add Account", { _ = try $0.addAccount(number: number, name: name, type: type) }) { dismiss() }
+                    let grouping = groupingID
+                    let ok = model.mutate("Add Account") { e in
+                        let a = try e.addAccount(number: number, name: name, type: nil)
+                        if let grouping { e.setGrouping(grouping, forAccounts: [a.id]) }
+                    }
+                    if ok { dismiss() }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(20)
-        .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }

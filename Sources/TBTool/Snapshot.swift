@@ -79,10 +79,9 @@ enum Snapshotter {
                 }))
             }
         }
-        steps.append(("type-review", {
+        steps.append(("new-account", {
             Windows.shared.closeAll()
-            model.selection = .accounts
-            model.showTypeReview()
+            model.showNewAccount()
         }))
         steps.append(("settings", {
             Windows.shared.closeAll()

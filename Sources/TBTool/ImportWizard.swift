@@ -481,7 +481,8 @@ struct ChartImportSheet: View {
                     Toggle("Replace groupings already set in this file", isOn: $options.overwriteGroupings)
                         .disabled(!options.applyGroupings)
                         .padding(.leading, 18)
-                    Toggle("Apply account types", isOn: $options.applyTypes)
+                    Toggle("Apply account types to accounts with no grouping", isOn: $options.applyTypes)
+                        .help("A grouped account's type always comes from its grouping. The source's type is used only for an account that stays ungrouped.")
                     Toggle("Add accounts this file doesn't have", isOn: $options.addMissing)
                 }
                 VStack(alignment: .leading, spacing: 4) {

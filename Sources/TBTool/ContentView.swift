@@ -323,17 +323,6 @@ struct Sidebar: View {
                         }
                     }
                 }
-                if let e = model.engagement, !e.typeConflicts.isEmpty {
-                    HStack {
-                        Label("Some accounts have a type that differs from their grouping's.", systemImage: "exclamationmark.triangle")
-                            .font(.callout)
-                        Spacer()
-                        Button("Review Account Types…") {
-                            showIssues = false
-                            model.showTypeReview()
-                        }
-                    }
-                }
                 if model.issues.isEmpty && (!model.brokenLinks.isEmpty || !(model.engagement?.ungroupedAccounts.isEmpty ?? true)) {
                     EmptyView()
                 } else if model.issues.isEmpty {

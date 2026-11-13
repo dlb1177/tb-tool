@@ -331,7 +331,12 @@ extension Engagement {
                         plan.keptExisting.append(a.display)
                     }
                 }
-                let newType = (options.applyTypes ? x.type : nil) ?? a.type
+                // A grouped account's type is its grouping's; the source's type only matters for an account
+                // that stays ungrouped (or sits in an "any type" grouping).
+                let all = groupings + pending
+                let fromGrouping: AccountType? = newGrouping.flatMap { id in all.first { $0.id == id } }
+                    .flatMap { g in g.parent.flatMap { p in all.first { $0.id == p } }?.type ?? g.type }
+                let newType = fromGrouping ?? (options.applyTypes ? x.type : nil) ?? a.type
                 if newGrouping != a.grouping || newType != a.type {
                     plan.changes.append(.init(accountID: a.id, display: a.display, oldGrouping: a.grouping, newGrouping: newGrouping,
                                               oldType: a.type, newType: newType))
@@ -362,6 +367,7 @@ extension Engagement {
         }
         for a in plan.added where account(a.id) == nil { accounts.append(a) }
         accounts.sort(by: accountPrecedes)
+        alignAccountTypes()
     }
 
     /// Account types by account id, for reading signs from a file that shows normal balances as positive.

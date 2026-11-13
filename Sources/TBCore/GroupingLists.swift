@@ -256,6 +256,7 @@ extension Engagement {
                 accounts[i].grouping = nil
             }
         }
+        alignAccountTypes()  // the new list decides the types
         if let name, !name.trimmed.isEmpty { groupingListName = name.trimmed }
     }
 }

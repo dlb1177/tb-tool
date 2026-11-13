@@ -152,7 +152,10 @@ final class AppModel: ObservableObject {
 
     func open(_ url: URL, remember: Bool = true) {
         do {
-            let e = try Store.load(url)
+            // An account's type comes from its grouping. A file from before that rule (or edited by
+            // hand) may say otherwise; the grouping wins, and the status line says how many changed.
+            var e = try Store.decode(try Data(contentsOf: url), aligningTypes: false)
+            let retyped = e.alignAccountTypes()
             closeWindows()
             fileURL = url
             diskDate = modificationDate(url)
@@ -161,6 +164,7 @@ final class AppModel: ObservableObject {
             set(e)
             selection = .consolidated
             status = "Opened \(url.lastPathComponent)"
+                + (retyped > 0 ? " — \(retyped) account\(retyped == 1 ? "" : "s") took the account type of \(retyped == 1 ? "its" : "their") grouping" : "")
             if remember && !quiet { UserDefaults.standard.set(url.path, forKey: "lastFile") }
         } catch {
             alert = AlertInfo(title: "Couldn't open \(url.lastPathComponent)", message: error.localizedDescription)
@@ -655,7 +659,7 @@ final class AppModel: ObservableObject {
     }
 
     func showNewAccount() {
-        Windows.shared.show("new-account", title: "New Account", size: NSSize(width: 440, height: 250), minSize: NSSize(width: 400, height: 230)) {
+        Windows.shared.show("new-account", title: "New Account", size: NSSize(width: 480, height: 300), minSize: NSSize(width: 440, height: 280), frameName: "new-account-2") {
             NewAccountSheet()
         }
     }
@@ -676,14 +680,6 @@ final class AppModel: ObservableObject {
         showUngroupedRequested = true
         selection = .accounts
         NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false }?.makeKeyAndOrderFront(nil)
-    }
-
-    /// Accounts whose type disagrees with their grouping's, to be settled grouping by grouping.
-    func showTypeReview() {
-        guard engagement != nil else { return }
-        Windows.shared.show("type-review", title: "Review Account Types", size: NSSize(width: 1000, height: 620), minSize: NSSize(width: 760, height: 420)) {
-            TypeConflictReview()
-        }
     }
 
     /// Settings for the app itself (as opposed to one trial balance file): the standard grouping lists.

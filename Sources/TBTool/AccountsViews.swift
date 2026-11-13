@@ -69,7 +69,6 @@ struct AccountsView: View {
                 }
                 Divider()
                 DraftBanner()
-                TypeConflictBanner()
                 if status != "ungrouped" { UngroupedBanner(show: showUngrouped) }
                 filterBar(e)
                 Divider()
@@ -249,16 +248,6 @@ struct AccountsView: View {
                     showPicker = false
                 }
             }
-            Menu("Set Type") {
-                ForEach(AccountType.allCases, id: \.self) { type in
-                    Button(type.label) {
-                        let ids = picked
-                        model.mutate("Set Account Type") { e in ids.forEach { id in e.updateAccount(id) { $0.type = type } } }
-                    }
-                }
-            }
-            .fixedSize()
-            .disabled(picked.isEmpty)
             Button("Clear Grouping") {
                 let ids = picked
                 model.mutate("Clear Grouping") { $0.setGrouping(nil, forAccounts: ids) }
@@ -286,12 +275,13 @@ struct AccountsView: View {
                 .width(min: 160, ideal: 300)
                 .customizationID("name")
             TableColumn("Type", value: \.typeLabel) { r in
-                Menu(r.typeLabel) {
-                    ForEach(AccountType.allCases, id: \.self) { type in
-                        Button(type.label) { model.mutate("Change Account Type") { $0.updateAccount(r.id) { $0.type = type } } }
-                    }
-                }
-                .menuStyle(.borderlessButton)
+                // Read only: the type is the grouping's. Until an account is grouped it shows the
+                // guess made from its number or name when it was imported.
+                let fromGrouping = e.groupingType(r.groupingID) != nil
+                Text(r.typeLabel)
+                    .foregroundStyle(fromGrouping ? HierarchicalShapeStyle.primary : HierarchicalShapeStyle.tertiary)
+                    .help(fromGrouping ? "From its grouping, \(r.grouping). To change it, change the account's grouping, or the grouping's account type on the Grouping List screen."
+                                       : "A guess from the account's number or name. It is set for good by the grouping you give the account.")
             }
             .width(min: 80, ideal: 100, max: 140)
             .customizationID("type")
@@ -487,7 +477,6 @@ struct GroupingsView: View {
                     }
                 }
                 Divider()
-                TypeConflictBanner()
                 UngroupedBanner()
                 if let (code, sharing) = e.sharedGroupingCodes.first {
                     // A file from before every code had to be unique.
@@ -650,7 +639,7 @@ struct GroupingSheet: View {
                         Divider()
                         Text("Any type (a memo line)").tag("any")
                     }
-                    .help("The kind of account that belongs in this grouping. Accounts put in it take this type, and the data check reports any that differ.")
+                    .help("The type of every account in this grouping. An account's type is never set on the account itself: it is whatever its grouping says.")
                 }
             }
             if parent == nil, let id = draft.groupingID, draft.typeChosen, let type = draft.type, type != e.grouping(id)?.type {

@@ -25,8 +25,8 @@ the client's folder**. No server, no account, no database.
   trial balance, consolidation and reports update live on the other display.
 - **Groups accounts to tax lines**, with subgroups, and reports by grouping. A Form 1065 / 8825
   list is built in; you keep your own standard list per entity type. Each grouping carries an
-  account type, accounts take it automatically, and anything that disagrees is flagged with a
-  review screen to settle it.
+  account type, and an account's type is simply its grouping's: it is never set on the account,
+  so the two cannot disagree. Ungrouped accounts raise an alert.
 - **Links workpapers to entries** and tells you when a linked file has been moved or renamed.
 - **Carries prior years** as PP1, PP2… columns, and **rolls forward** to next year's file, with
   each entry marked to carry over with amounts, without amounts, as a reversal, or not at all.
