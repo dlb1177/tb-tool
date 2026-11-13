@@ -1,0 +1,39 @@
+Account,Debit,Credit
+10003 Clayton Checking (5309) - 2,10770.09,
+14200 Land - Clayton,130600.00,
+14250 Storage Building - Clayton,713800.00,
+14275 Equipment-Clayton,12200.00,
+14299 Accumulated Depreciation,,63553.77
+14700 Finance Fees,2433.14,
+14799 Accumulated Amortization,,28.50
+23100 Customer Deposits - Clayton,,4055.00
+23250 Security Deposit,,4282.13
+24200 Mortgage Payable - Clayton,,562300.00
+32000 Member's Equity - Summit Storage LLC,,177824.67
+40000 Rent/Lease Income,,101577.11
+42000 TPP Income,,5098.52
+43000 Commercial Rent Income,,16346.05
+46000 Late Fee / Admin Fee,,4254.80
+49000 Variance to Rent Roll,,1265.41
+51000 Advertising & Marketing,274.72,
+51040 Bank Charges & Fees,4430.01,
+51060 Contractors,2205.92,
+51080 Insurance,2083.23,
+51100 Interest Expenses,20380.46,
+51130 Tax and Accounting Expense,566.21,
+51150 Reimbursed Manager Expense,2163.35,
+51155 Summit Mgmt - Monthly Fee,1338.90,
+51160 Office Supplies,12.89,
+51180 Other Business Expenses,142.94,
+51190 Software Expense,580.43,
+51200 Property Taxes,8678.31,
+51220 Repairs & Maintenance,2860.75,
+51225 Snow & Lawn,3484.69,
+51230 Rent & Lease,393.64,
+51240 Taxes & Licenses,12895.43,
+51250 Travel,39.12,
+51260 Utilities,5785.95,
+51280 Call Center Expense,1466.47,
+51290 TPP Expense,1024.51,
+59900 Misc. Expense,,25.20
+TOTAL,940611.16,940611.16

@@ -1,0 +1,37 @@
+Account,Debit,Credit
+10001 Ashford Checking (1042) - 2,12643.59,
+14100 Land - Ashford,128000.00,
+14150 Storage Building - Ashford,372000.00,
+14299 Accumulated Depreciation,,24981.09
+14700 Finance Fees,821.08,
+14799 Accumulated Amortization,,25.80
+23000 Customer Deposits - Ashford,,2510.64
+23250 Security Deposit,87.60,
+24100 Mortgage Payable - Ashford,,269800.00
+32000 Member's Equity - Summit Storage LLC,,181441.23
+40000 Rent/Lease Income,,76156.28
+42000 TPP Income,,3444.76
+46000 Late Fee / Admin Fee,,3567.24
+49000 Variance to Rent Roll,,1100.87
+51000 Advertising & Marketing,81.10,
+51040 Bank Charges & Fees,1739.83,
+51060 Contractors,2903.99,
+51080 Insurance,896.22,
+51100 Interest Expenses,12168.98,
+51130 Tax and Accounting Expense,717.02,
+51150 Reimbursed Manager Expense,2398.37,
+51155 Summit Mgmt - Monthly Fee,1580.91,
+51160 Office Supplies,11.29,
+51180 Other Business Expenses,178.23,
+51190 Software Expense,393.45,
+51200 Property Taxes,3837.52,
+51220 Repairs & Maintenance,10846.33,
+51225 Snow & Lawn,4163.51,
+51230 Rent & Lease,365.37,
+51240 Taxes & Licenses,4641.74,
+51250 Travel,16.08,
+51260 Utilities,171.31,
+51280 Call Center Expense,865.88,
+51290 TPP Expense,1521.05,
+59900 Misc. Expense,,22.54
+TOTAL,563050.45,563050.45

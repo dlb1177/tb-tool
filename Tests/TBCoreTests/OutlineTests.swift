@@ -1,0 +1,528 @@
+import XCTest
+@testable import TBCore
+
+/// Subgroups, the grouping reports, reversing roll forwards, rows brought in by hand on import,
+/// the account type filter, and where a missing file was last seen.
+final class OutlineTests: XCTestCase {
+
+    func m(_ s: String) -> Money { Money.parse(s)!.value }
+
+    func line(_ entity: String, _ account: String, _ amount: String, _ memo: String = "") -> JELine {
+        JELine(entity: entity, account: account, amount: m(amount), memo: memo)
+    }
+
+    func sample() throws -> Engagement { try TBCoreTests().sampleEngagement() }
+
+    func money(_ t: ReportTable, row: String, column: String) -> Money {
+        let c = t.columns.firstIndex { $0.title == column }!
+        if case .money(let v) = t.rows.first(where: { $0.id == row })!.cells[c] { return v }
+        return .zero
+    }
+
+    /// 808 Legal and professional fees with two subgroups, one account in each and one left directly in the grouping.
+    func grouped() throws -> (Engagement, office: Grouping, fees: Grouping) {
+        var e = try sample()
+        let office = try e.addGrouping(code: "", name: "Office", section: "", parent: "808")
+        let fees = try e.addGrouping(code: "808F", name: "Fees", section: "ignored", parent: "808")
+        e.setGrouping(office.id, forAccounts: ["51160"])
+        e.setGrouping(fees.id, forAccounts: ["51040", "51130"])
+        e.setGrouping("808", forAccounts: ["51180"])
+        e.setGrouping("802", forAccounts: ["40000"])
+        return (e, office, fees)
+    }
+
+    // MARK: Subgroups
+
+    func testSubgroupsSitUnderTheirGrouping() throws {
+        let (e, office, fees) = try grouped()
+        XCTAssertEqual(office.id, "808/OFFICE")
+        XCTAssertEqual(office.section, DefaultGroupings.section8825)  // taken from the parent
+        XCTAssertEqual(fees.section, DefaultGroupings.section8825)
+        XCTAssertEqual(e.subgroups(of: "808").map(\.name), ["Office", "Fees"])
+        XCTAssertEqual(e.parentGrouping(of: office)?.id, "808")
+        // They follow their parent in the list, and the outline nests them.
+        let at = e.groupings.firstIndex { $0.id == "808" }!
+        XCTAssertEqual(e.groupings[(at + 1)...(at + 2)].map(\.id), [office.id, fees.id])
+        XCTAssertEqual(e.groupingOutline.first { $0.grouping.id == office.id }?.depth, 1)
+        XCTAssertEqual(e.groupingOutline.count, e.groupings.count)
+        // A blank code reports under the parent's; its own code wins when it has one.
+        XCTAssertEqual(e.groupingCode(office.id), "808")
+        XCTAssertEqual(e.groupingCode(fees.id), "808F")
+        XCTAssertEqual(e.groupingLabel(office.id), "808 · LEGAL AND PROF FEE › Office")
+        XCTAssertEqual(e.issues(), [])
+        XCTAssertEqual(try Store.decode(Store.encode(e)), e)
+
+        // One level deep, unique names under a parent, and a grouping with subgroups can't be nested.
+        var x = e
+        XCTAssertThrowsError(try x.addGrouping(code: "", name: "Deeper", section: "", parent: office.id))
+        XCTAssertThrowsError(try x.addGrouping(code: "", name: "office", section: "", parent: "808"))
+        XCTAssertThrowsError(try x.addGrouping(code: "", name: "No code", section: "8825 Accounts"))
+        XCTAssertThrowsError(try x.updateGrouping("808", code: "815", name: "X", section: "", parent: "802"))
+        // A subgroup can move to another grouping, taking that grouping's section.
+        try x.updateGrouping(fees.id, code: "", name: "Fees", section: "", parent: "L13")
+        XCTAssertEqual(x.grouping(fees.id)?.section, DefaultGroupings.sectionL)
+        XCTAssertEqual(x.groupingCode(fees.id), "L13")
+        XCTAssertEqual(x.groupings[x.groupings.firstIndex { $0.id == "L13" }! + 1].id, fees.id)
+        XCTAssertEqual(x.account("51040")?.grouping, fees.id)
+
+        // Deleting a subgroup moves its accounts up; deleting the grouping takes its subgroups with it.
+        var d = e
+        d.deleteGrouping(office.id)
+        XCTAssertEqual(d.account("51160")?.grouping, "808")
+        d.deleteGrouping("808")
+        XCTAssertNil(d.grouping(fees.id))
+        XCTAssertNil(d.account("51040")?.grouping)
+        XCTAssertNil(d.account("51160")?.grouping)
+        XCTAssertEqual(d.issues(), [])
+
+        // A file edited by hand: a subgroup pointing nowhere is reported and treated as its own grouping.
+        var broken = e
+        broken.groupings[broken.groupings.firstIndex { $0.id == office.id }!].parent = "NOPE"
+        XCTAssertEqual(broken.issues().count, 1)
+        XCTAssertNil(broken.parentGrouping(of: broken.grouping(office.id)!))
+        XCTAssertTrue(Reports(broken).groupingSummary(basis: .book, detail: false).rows.contains { $0.id == "g:\(office.id)" && $0.parentRowID == nil })
+    }
+
+    func testGroupingSummaryNestsSubgroupsAndShowsNetIncome() throws {
+        let (e, office, fees) = try grouped()
+        let ledger = Ledger(e)
+        let reports = Reports(e)
+        let expected = ["51160", "51040", "51130", "51180"].map { ledger.consolidated(.book, account: $0) }
+
+        let summary = reports.groupingSummary(basis: .book, detail: false)
+        XCTAssertEqual(Set(summary.rows.map(\.id)).count, summary.rows.count)
+        let ids = summary.rows.map(\.id)
+        let at = ids.firstIndex(of: "g:808")!
+        // The grouping, then its subgroups indented, then what it holds outside them.
+        XCTAssertEqual(Array(ids[at...(at + 3)]), ["g:808", "g:\(office.id)", "g:\(fees.id)", "g:808:direct"])
+        XCTAssertEqual(summary.rows[at].cells[1], .text("LEGAL AND PROF FEE"))
+        XCTAssertEqual(summary.rows[at + 1].cells[1], .text("    Office"))
+        XCTAssertEqual(summary.rows[at + 3].cells[1], .text("    Not in a subgroup"))
+        XCTAssertEqual(summary.rows[at].groupingID, "808")
+        XCTAssertEqual(summary.rows[at + 2].groupingID, fees.id)
+        XCTAssertEqual(summary.rows[at + 1].parentRowID, "g:808")
+        XCTAssertEqual(money(summary, row: "g:808", column: "Consolidated"), expected.sum())
+        XCTAssertEqual(money(summary, row: "g:\(office.id)", column: "Consolidated"), expected[0])
+        XCTAssertEqual(money(summary, row: "g:\(fees.id)", column: "Consolidated"), expected[1] + expected[2])
+        XCTAssertEqual(money(summary, row: "g:808:direct", column: "Consolidated"), expected[3])
+
+        // Net income in every column, matching the consolidating trial balance.
+        let consolidating = reports.consolidating(basis: .book, hideZero: true)
+        XCTAssertEqual(summary.rows.last?.id, "income")
+        XCTAssertEqual(summary.rows[summary.rows.count - 2].id, "total")
+        XCTAssertEqual(Array(summary.rows.last!.cells.dropFirst(2)), Array(consolidating.rows.last!.cells.dropFirst(3)))
+        XCTAssertEqual(money(summary, row: "income", column: "Consolidated"), ledger.consolidatedNetIncome(.book))
+        XCTAssertFalse(ledger.consolidatedNetIncome(.book).isZero)
+        XCTAssertEqual(money(summary, row: "total", column: "Consolidated"), .zero)
+
+        // Filtering a summary doesn't count a subgroup twice when its grouping is shown too.
+        let shown = summary.filtered("", filters: FilterSet(conditions: [FilterCondition(column: "Code", op: .startsWith, value: "808")]))
+        XCTAssertEqual(shown.rows.filter { $0.style == .normal }.map(\.id), ["g:808", "g:\(fees.id)"])
+        XCTAssertEqual(money(shown, row: "filtered-total", column: "Consolidated"), expected.sum())
+        let onlySub = summary.filtered("", filters: FilterSet(conditions: [FilterCondition(column: "Grouping", op: .equals, value: "fees")]))
+        XCTAssertEqual(onlySub.rows.filter { $0.style == .normal }.map(\.id), ["g:\(fees.id)"])
+        XCTAssertEqual(money(onlySub, row: "filtered-total", column: "Consolidated"), expected[1] + expected[2])
+
+        // Detail: the same outline with each grouping and subgroup opened to its accounts.
+        let detail = reports.groupingSummary(basis: .book, detail: true)
+        XCTAssertEqual(Set(detail.rows.map(\.id)).count, detail.rows.count)
+        let d = detail.rows.map(\.id)
+        let from = d.firstIndex(of: "g:808")!
+        XCTAssertEqual(Array(d[from...(from + 7)]), [
+            "g:808", "g:\(office.id)", "g:\(office.id):a:51160", "g:\(fees.id)", "g:\(fees.id):a:51040", "g:\(fees.id):a:51130",
+            "g:808:direct", "g:808:a:51180",
+        ])
+        XCTAssertEqual(detail.rows[from].style, .subtotal)
+        XCTAssertEqual(detail.rows[from + 2].style, .normal)
+        XCTAssertEqual(detail.rows[from + 2].accountID, "51160")
+        XCTAssertEqual(detail.rows[from + 2].cells[1], .text("        Office Supplies"))
+        XCTAssertEqual(money(detail, row: "g:808", column: "Consolidated"), expected.sum())
+        XCTAssertEqual(detail.rows.last?.id, "income")
+        // A grouping with no subgroups lists its accounts straight under it.
+        let rents = d.firstIndex(of: "g:802")!
+        XCTAssertEqual(d[rents + 1], "g:802:a:40000")
+        // The account rows of the detail add up to the grand total (zero).
+        var sum = Money.zero
+        let last = detail.columns.count - 1
+        for r in detail.rows where r.style == .normal { if case .money(let v) = r.cells[last] { sum += v } }
+        XCTAssertEqual(sum, .zero)
+    }
+
+    func testGroupingDrillDownListsTheAccounts() throws {
+        let (e, office, fees) = try grouped()
+        let ledger = Ledger(e)
+        let reports = Reports(e)
+        let t = reports.groupingAccounts(groupingID: "808", basis: .book)
+        XCTAssertEqual(t.title, "808 · LEGAL AND PROF FEE")
+        XCTAssertEqual(t.columns.map(\.title).suffix(3), ["Combined", "Eliminations", "Consolidated"])
+        XCTAssertEqual(t.columns.count, 2 + e.entities.count + 3)
+        XCTAssertEqual(t.rows.map(\.id), ["g:\(office.id)", "a:51160", "g:\(fees.id)", "a:51040", "a:51130", "direct", "a:51180", "total"])
+        let total = ["51160", "51040", "51130", "51180"].map { ledger.consolidated(.book, account: $0) }.sum()
+        XCTAssertEqual(money(t, row: "total", column: "Consolidated"), total)
+        XCTAssertEqual(money(t, row: "total", column: "Consolidated"), money(reports.groupingSummary(basis: .book, detail: false), row: "g:808", column: "Consolidated"))
+        XCTAssertEqual(t.rows[1].accountID, "51160")
+        // A subgroup on its own, and a grouping with none: a plain list.
+        let sub = reports.groupingAccounts(groupingID: fees.id, basis: .book)
+        XCTAssertEqual(sub.title, "808 · LEGAL AND PROF FEE › Fees")
+        XCTAssertEqual(sub.rows.map(\.id), ["a:51040", "a:51130", "total"])
+        XCTAssertEqual(reports.groupingAccounts(groupingID: "802", basis: .book).rows.map(\.id), ["a:40000", "total"])
+        // An entry posted to an account in the grouping shows up in it.
+        var posted = e
+        try posted.post(JournalEntry(number: "AJE-1", type: .adjusting, date: "2026-12-31",
+                                     lines: [line("ashford", "51040", "250"), line("ashford", "23000", "-250")]))
+        XCTAssertEqual(money(Reports(posted).groupingAccounts(groupingID: "808", basis: .book), row: "total", column: "Consolidated"), total + m("250"))
+        // With prior years, the PP columns follow.
+        XCTAssertEqual(reports.groupingAccounts(groupingID: "802", basis: .book, prior: 2).columns.count, t.columns.count)
+    }
+
+    func testHideZeroRowsEverywhere() throws {
+        var (e, office, _) = try grouped()
+        // An account that is on a trial balance at zero, in a subgroup of its own.
+        _ = try e.addAccount(number: "51999", name: "Unused Expense", type: .expense)
+        e.entities[e.entities.firstIndex { $0.id == "ashford" }!].balances.append(Balance(account: "51999", amount: .zero))
+        let lone = try e.addGrouping(code: "", name: "Empty", section: "", parent: "808")
+        e.setGrouping(lone.id, forAccounts: ["51999"])
+        XCTAssertEqual(e.issues(), [])
+        let reports = Reports(e)
+
+        for detail in [false, true] {
+            let hidden = reports.groupingSummary(basis: .book, detail: detail, hideZero: true)
+            let shown = reports.groupingSummary(basis: .book, detail: detail, hideZero: false)
+            XCTAssertFalse(hidden.rows.contains { $0.id == "g:\(lone.id)" })
+            XCTAssertTrue(shown.rows.contains { $0.id == "g:\(lone.id)" })
+            XCTAssertEqual(shown.rows.contains { $0.accountID == "51999" }, detail)
+            XCTAssertEqual(money(hidden, row: "total", column: "Consolidated"), .zero)
+            XCTAssertEqual(money(shown, row: "g:808", column: "Consolidated"), money(hidden, row: "g:808", column: "Consolidated"))
+            XCTAssertEqual(shown.rows.last, hidden.rows.last)  // net income doesn't depend on what is hidden
+        }
+        XCTAssertFalse(reports.groupingAccounts(groupingID: "808", basis: .book, hideZero: true).rows.contains { $0.id == "g:\(lone.id)" })
+        XCTAssertTrue(reports.groupingAccounts(groupingID: "808", basis: .book, hideZero: false).rows.contains { $0.accountID == "51999" })
+        XCTAssertTrue(reports.workbook(hideZero: false)[0].rows.contains { $0.accountID == "51999" })
+        XCTAssertFalse(reports.workbook()[0].rows.contains { $0.accountID == "51999" })
+
+        // The long-format data: every row unless asked, and never a row with an amount in it dropped.
+        let tidy = reports.tidy(), trimmed = reports.tidy(hideZero: true)
+        func allZero(_ r: ReportRow) -> Bool { r.cells.allSatisfy { if case .money(let v) = $0 { return v.isZero }; return true } }
+        XCTAssertTrue(tidy.rows.contains { $0.accountID == "51999" })
+        XCTAssertFalse(trimmed.rows.contains { $0.accountID == "51999" })
+        XCTAssertEqual(trimmed.rows.map(\.id), tidy.rows.filter { !allZero($0) }.map(\.id))
+        // It names the grouping an account rolls up to and its subgroup.
+        let row = tidy.rows.first { $0.accountID == "51160" }!
+        let col = { (title: String) in row.cells[tidy.columns.firstIndex { $0.title == title }!] }
+        XCTAssertEqual(col("Grouping Code"), .text("808"))
+        XCTAssertEqual(col("Grouping"), .text("LEGAL AND PROF FEE"))
+        XCTAssertEqual(col("Subgroup"), .text("Office"))
+        XCTAssertEqual(office.name, "Office")
+    }
+
+    func testSubgroupsTravelWithGroupingLists() throws {
+        let (e, office, fees) = try grouped()
+        let list = GroupingTransfer.list(of: e)
+        XCTAssertEqual(try GroupingTransfer.decodeJSON(GroupingTransfer.json(list), name: "x").groupings, e.groupings)
+        XCTAssertEqual(try GroupingTransfer.fromTable(TBImporter.parseCSV(GroupingTransfer.csv(list)), name: "x").groupings, e.groupings)
+
+        // A list written by hand: the parent named by its code, the subgroup's own code left blank.
+        let sheet = "Section,Code,Name,Subgroup Of\nPage 1,S19,OTHER DEDUCTIONS,\n,,Travel,S19\n,S19B,Meals,S19\nPage 1,S7,OFFICER COMP,\n,,Orphan,NOPE\n"
+        let scorp = try GroupingTransfer.fromTable(TBImporter.parseCSV(sheet), name: "S Corp").groupings
+        XCTAssertEqual(scorp.map(\.name), ["OTHER DEDUCTIONS", "Travel", "Meals", "OFFICER COMP", "Orphan"])
+        XCTAssertEqual(scorp.map(\.parent), [nil, "S19", "S19", nil, nil])
+        XCTAssertEqual(scorp[1].id, "S19/TRAVEL")
+        XCTAssertEqual(Set(scorp.map(\.id)).count, 5)
+
+        // Imported into another file: the subgroups arrive under their grouping, assignments kept.
+        var other = try sample()
+        other.setGrouping("808", forAccounts: ["51160"])
+        let plan = other.planGroupingImport(list, mode: .merge)
+        XCTAssertEqual(plan.added.map(\.id), [office.id, fees.id])
+        other.applyGroupingImport(plan)
+        XCTAssertEqual(other.subgroups(of: "808").map(\.id), [office.id, fees.id])
+        XCTAssertEqual(other.issues(), [])
+
+        // A chart export carries an account's subgroup into a file that doesn't have it yet.
+        var third = try sample()
+        let chart = try ChartTransfer.decodeJSON(ChartTransfer.json(ChartTransfer.chart(of: e)), name: "x")
+        third.applyChartImport(third.planChartImport(chart))
+        XCTAssertEqual(third.account("51160")?.grouping, office.id)
+        XCTAssertEqual(third.parentGrouping(of: third.grouping(office.id)!)?.id, "808")
+        XCTAssertEqual(third.issues(), [])
+    }
+
+    // MARK: One code, one grouping
+
+    func testGroupingCodesMustBeUnique() throws {
+        var e = try sample()
+        // Adding: a code that a grouping or a subgroup already has is refused, in any case.
+        XCTAssertThrowsError(try e.addGrouping(code: "L01", name: "MORE CASH", section: "Sch. L Accounts")) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Code L01 is already used by “L01 · CASH”"), error.localizedDescription)
+        }
+        XCTAssertThrowsError(try e.addGrouping(code: "l01", name: "Petty cash", section: "", parent: "L02"))
+        let sub = try e.addGrouping(code: "L01P", name: "Petty cash", section: "", parent: "L01")
+        XCTAssertThrowsError(try e.addGrouping(code: "L01P", name: "Another", section: "Sch. L Accounts"))
+        XCTAssertThrowsError(try e.addGrouping(code: "L01P", name: "Another", section: "", parent: "L02"))
+        // Subgroups may leave the code blank as often as they like: they use their grouping's.
+        _ = try e.addGrouping(code: "", name: "Sweep accounts", section: "", parent: "L01")
+        _ = try e.addGrouping(code: "", name: "Escrow", section: "", parent: "L01")
+        // Editing: the code can't be changed to one in use; everything else can be.
+        XCTAssertThrowsError(try e.updateGrouping("L02", code: "L01", name: "A/R", section: ""))
+        XCTAssertThrowsError(try e.updateGrouping(sub.id, code: "L03", name: "Petty cash", section: "", parent: "L01"))
+        try e.updateGrouping("L02", code: "L02", name: "ACCOUNTS RECEIVABLE", section: "")
+        try e.updateGrouping("L02", code: "L02X", name: "ACCOUNTS RECEIVABLE", section: "")
+        XCTAssertTrue(e.sharedGroupingCodes.isEmpty)
+        XCTAssertEqual(e.issues(), [])
+        XCTAssertTrue(Engagement.sharedCodes(DefaultGroupings.list).isEmpty)
+    }
+
+    func testFilesFromBeforeUniqueCodesAreFlaggedAndCombinedInOneStep() throws {
+        // The list as it used to ship: six groupings sharing code 815.
+        var e = try sample()
+        let lines = [("815-AMORT", "AMORTIZATION"), ("815-OFFICE", "OFFICE EXPENSE"), ("815-MGMT", "MANAGEMENT FEES"),
+                     ("815-LAWN", "LAWN CARE"), ("815-MISC", "MISCELLANEOUS"), ("815-GP", "GUARANTEED PAYMENTS")]
+        e.groupings.removeAll { $0.id == "815" || $0.parent == "815" }
+        let at = e.groupings.firstIndex { $0.id == "814" }! + 1
+        e.groupings.insert(contentsOf: lines.map { Grouping(id: $0.0, code: "815", name: "OTHER - \($0.1)", section: DefaultGroupings.section8825) }, at: at)
+        e.setGrouping("815-MGMT", forAccounts: ["51155"])
+        e.setGrouping("815-MISC", forAccounts: ["51180"])
+        let before = Reports(e).groupingSummary(basis: .book, detail: false)
+
+        // It still opens and reports; the data check says what is wrong and how to fix it.
+        XCTAssertEqual(e.sharedGroupingCodes.map(\.code), ["815"])
+        XCTAssertEqual(e.issues().count, 1)
+        XCTAssertTrue(e.issues()[0].hasPrefix("Code 815 is used by 6 groupings"))
+        XCTAssertEqual(try Store.decode(Store.encode(e)), e)
+        // An old shared code can be left alone while its grouping is renamed, but no new one can join it.
+        try e.updateGrouping("815-LAWN", code: "815", name: "OTHER - LAWN AND SNOW", section: "")
+        try e.updateGrouping("815-LAWN", code: "815", name: "OTHER - LAWN CARE", section: "")
+        XCTAssertThrowsError(try e.addGrouping(code: "815", name: "OTHER - SECURITY", section: DefaultGroupings.section8825))
+
+        // One step: a single 815 grouping with the six as its subgroups. Nothing an account points at moves.
+        XCTAssertEqual(e.mergeSharedGroupingCodes(), 6)
+        XCTAssertEqual(e.groupings, DefaultGroupings.list)
+        XCTAssertEqual(e.account("51155")?.grouping, "815-MGMT")
+        XCTAssertEqual(e.groupingCode("815-MGMT"), "815")
+        XCTAssertEqual(e.groupingLabel("815-MGMT"), "815 · OTHER › MANAGEMENT FEES")
+        XCTAssertEqual(e.issues(), [])
+        XCTAssertEqual(e.mergeSharedGroupingCodes(), 0)  // nothing left to do
+        // The report now shows one 815 line with the same total the separate lines added up to.
+        let after = Reports(e).groupingSummary(basis: .book, detail: false)
+        let old = money(before, row: "g:815-MGMT", column: "Consolidated") + money(before, row: "g:815-MISC", column: "Consolidated")
+        XCTAssertEqual(money(after, row: "g:815", column: "Consolidated"), old)
+        XCTAssertEqual(money(after, row: "g:815-MGMT", column: "Consolidated"), money(before, row: "g:815-MGMT", column: "Consolidated"))
+        XCTAssertEqual(after.rows.first { $0.id == "g:815-MGMT" }?.parentRowID, "g:815")
+
+        // Names with nothing in common still combine, under a plainly labelled grouping.
+        let odd = Engagement.mergingSharedCodes([Grouping(id: "A", code: "7", name: "RENT", section: "P"), Grouping(id: "B", code: "7", name: "OTHER INCOME", section: "P"),
+                                                 Grouping(id: "C", code: "9", name: "WAGES", section: "P")])
+        XCTAssertEqual(odd.map(\.name), ["7 (combined)", "RENT", "OTHER INCOME", "WAGES"])
+        XCTAssertEqual(odd.map(\.parent), [nil, "7", "7", nil])
+        XCTAssertTrue(Engagement.sharedCodes(odd).isEmpty)
+        // A subgroup that repeats its grouping's code simply uses it.
+        let echo = Engagement.mergingSharedCodes([Grouping(id: "A", code: "7", name: "RENT", section: "P"), Grouping(id: "A1", code: "7", name: "Sub", section: "P", parent: "A")])
+        XCTAssertEqual(echo.map(\.code), ["7", ""])
+        // A list exported before the change comes back in as the current one.
+        let legacy = GroupingList(name: "Old", groupings: DefaultGroupings.list.filter { $0.id != "815" }.map { g in
+            g.parent == "815" ? Grouping(id: g.id, code: "815", name: "OTHER - \(g.name)", section: g.section) : g
+        })
+        XCTAssertEqual(try GroupingTransfer.decodeJSON(GroupingTransfer.json(legacy), name: "x").groupings, DefaultGroupings.list)
+        XCTAssertTrue(try sample().planGroupingImport(legacy, mode: .replace).isEmpty)
+        XCTAssertTrue(try sample().planGroupingImport(legacy, mode: .merge).isEmpty)
+    }
+
+    // MARK: Standard lists kept on this Mac
+
+    func testStandardGroupingListsByEntityType() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-standards-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let partnership = Binder.entityTypes[0], scorp = Binder.entityTypes[1]
+        // Out of the box: the built-in list, standard for partnerships and the fallback for everything else.
+        XCTAssertEqual(GroupingLibrary.all(in: dir).map(\.name), [GroupingList.standardName])
+        XCTAssertFalse(GroupingLibrary.isStandardChanged(in: dir))
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: partnership, in: dir).groupings, DefaultGroupings.list)
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: scorp, in: dir).name, GroupingList.standardName)
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: "", in: dir).name, GroupingList.standardName)
+
+        // A list of your own, made the standard for S corporations.
+        var mine = GroupingList(name: "S Corporation 2026", groupings: [Grouping(id: "S1A", code: "S1A", name: "GROSS RECEIPTS", section: "Page 1"),
+                                                                        Grouping(id: "S19", code: "S19", name: "OTHER DEDUCTIONS", section: "Page 1")])
+        try GroupingLibrary.save(mine, in: dir)
+        try GroupingLibrary.setStandard(mine.name, forEntityType: scorp, in: dir)
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: scorp, in: dir).name, "S Corporation 2026")
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: scorp.uppercased(), in: dir).groupings, mine.groupings)
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: partnership, in: dir).name, GroupingList.standardName)
+        XCTAssertEqual(GroupingLibrary.all(in: dir).map(\.name), [GroupingList.standardName, "S Corporation 2026"])
+
+        // Updating the built-in list for a new year keeps a changed copy; it can be put back as shipped.
+        var standard = GroupingLibrary.standard(in: dir)
+        standard.groupings.append(Grouping(id: "K20", code: "K20", name: "OTHER INFORMATION", section: DefaultGroupings.sectionK))
+        try GroupingLibrary.save(standard, in: dir)
+        XCTAssertTrue(GroupingLibrary.isStandardChanged(in: dir))
+        XCTAssertEqual(GroupingLibrary.standard(in: dir).groupings.count, DefaultGroupings.list.count + 1)
+        XCTAssertEqual(GroupingLibrary.standard(in: dir).entityTypes, [partnership])
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: partnership, in: dir).groupings.last?.code, "K20")
+        GroupingLibrary.delete(named: GroupingList.standardName, in: dir)
+        XCTAssertFalse(GroupingLibrary.isStandardChanged(in: dir))
+        XCTAssertEqual(GroupingLibrary.standard(in: dir).groupings, DefaultGroupings.list)
+
+        // Moving a type from one list to another leaves it on exactly one; clearing leaves the fallback.
+        try GroupingLibrary.setStandard(GroupingList.standardName, forEntityType: scorp, in: dir)
+        XCTAssertEqual(GroupingLibrary.list(forEntityType: scorp, in: dir).name, GroupingList.standardName)
+        XCTAssertEqual(GroupingLibrary.all(in: dir).filter { $0.entityTypes.contains(scorp) }.count, 1)
+        try GroupingLibrary.setStandard(nil, forEntityType: scorp, in: dir)
+        XCTAssertEqual(GroupingLibrary.all(in: dir).filter { $0.entityTypes.contains(scorp) }.count, 0)
+        // A list with a code used twice can't be saved as a standard.
+        mine.groupings.append(Grouping(id: "S19B", code: "S19", name: "MORE", section: "Page 1"))
+        XCTAssertThrowsError(try GroupingLibrary.save(mine, in: dir))
+    }
+
+    // MARK: Roll forward as a reversal
+
+    func testRollForwardAsReversal() throws {
+        var e = try sample()
+        var accrual = JournalEntry(number: "AJE-1", type: .adjusting, date: "2026-12-31", description: "Accrue interest",
+                                   lines: [line("ashford", "51100", "900", "December interest"), line("ashford", "24100", "-900")],
+                                   references: [FileReference(path: "Workpapers/Interest.xlsx")])
+        accrual.rollForward = .reversal
+        var recurring = JournalEntry(number: "AJE-2", type: .adjusting, date: "2026-12-31", description: "Recurring",
+                                     lines: [line("ashford", "51040", "10"), line("ashford", "23000", "-10")])
+        recurring.rollForward = .withAmounts
+        try e.post(accrual)
+        try e.post(recurring)
+
+        let summary = try e.rollForwardSummary()
+        XCTAssertEqual(summary.reversed.map(\.number), ["AJE-1"])
+        XCTAssertEqual(summary.withAmounts.map(\.number), ["AJE-2"])
+        XCTAssertEqual(summary.entryCounts, "1 with amounts · 1 as a reversal · 0 left behind")
+
+        let next = try e.rolledForward()
+        let reversed = next.journalEntries.first { $0.number == "AJE-1" }!
+        XCTAssertEqual(reversed.lines.map(\.amount), [m("-900"), m("900")])
+        XCTAssertEqual(reversed.lines.map(\.memo), ["[Reversal from 2026] December interest", "[Reversal from 2026]"])
+        XCTAssertEqual(reversed.lines.map(\.account), ["51100", "24100"])
+        XCTAssertEqual(reversed.description, "Accrue interest")
+        XCTAssertEqual(reversed.date, "2027-01-01")
+        XCTAssertEqual(reversed.type, .adjusting)
+        XCTAssertFalse(reversed.pending)
+        XCTAssertEqual(reversed.rollForward, .none)  // it won't reverse itself again the year after
+        XCTAssertEqual(reversed.references, [])
+        XCTAssertNotEqual(reversed.id, accrual.id)
+        XCTAssertEqual(Ledger(next).value(.aje, entity: "ashford", account: "51100"), m("-900"))
+        XCTAssertEqual(next.issues(), [])
+        XCTAssertEqual(try Store.decode(Store.encode(next)), next)
+        XCTAssertEqual(try Store.decode(Store.encode(e)).entry(accrual.id)?.rollForward, .reversal)
+
+        // Nothing to reverse on an entry that is still waiting for its amounts.
+        var waiting = next
+        var blank = JournalEntry(number: "AJE-9", type: .adjusting, date: "2027-12-31",
+                                 lines: [line("ashford", "51100", "0"), line("ashford", "24100", "0")])
+        blank.pending = true
+        blank.rollForward = .reversal
+        waiting.journalEntries.append(blank)
+        XCTAssertEqual(try waiting.rollForwardSummary().reversed, [])
+        XCTAssertTrue(try waiting.rollForwardSummary().notRolled.contains { $0.number == "AJE-9" })
+    }
+
+    // MARK: Import: any row can be checked or unchecked
+
+    func testAnyImportRowCanBeBroughtInOrLeftOut() throws {
+        let csv = """
+        Client Co,,
+        Opening adjustment,25.00,
+        Account,Debit,Credit
+        1000 Cash,100.00,
+        ASSETS,,
+        Total Fees,,60.00
+        ,,65.00
+        4000 Sales,,1.2.3
+        ,,
+        TOTAL,100.00,125.00
+        """
+        let sheet = RawSheet(name: "x", rows: TBImporter.parseCSV(csv))
+        var mapping = ImportMapping(headerRow: 2, roles: [.accountCombined, .debit, .credit])
+        var p = TBImporter.evaluate(sheet, mapping, sourceName: "x")
+        XCTAssertEqual(p.rows.map(\.kind), [.aboveHeader, .aboveHeader, .header, .account, .heading, .total, .noAccount, .badAmount, .blank, .total])
+        XCTAssertEqual(p.rows.map(\.included), [false, false, false, true, false, false, false, false, false, false])
+        // Everything with something on it can be switched, except the header.
+        XCTAssertEqual(p.rows.map(\.toggleable), [true, true, false, true, true, true, true, true, false, true])
+
+        // Check every row that wasn't read as an account.
+        for r in p.rows where r.kind != .account { mapping.setIncluded(true, row: r) }
+        XCTAssertEqual(mapping.forced, [0, 1, 4, 5, 6, 7, 9])
+        p = TBImporter.evaluate(sheet, mapping, sourceName: "x")
+        XCTAssertEqual(p.rows.map(\.included), [true, true, false, true, true, true, true, true, false, true])
+        XCTAssertEqual(p.rows.map(\.kind), [.aboveHeader, .aboveHeader, .header, .account, .heading, .total, .noAccount, .badAmount, .blank, .total])
+        let got = Dictionary(uniqueKeysWithValues: p.tb.rows.map { ($0.number.isEmpty ? $0.name : $0.number, $0.amount) })
+        XCTAssertEqual(got["Client Co"], .zero)                 // a heading comes in at zero
+        XCTAssertEqual(got["Opening adjustment"], m("25"))      // a row above the header
+        XCTAssertEqual(got["1000"], m("100"))
+        XCTAssertEqual(got["ASSETS"], .zero)
+        XCTAssertEqual(got["Total Fees"], m("-60"))             // an account that merely looks like a total
+        XCTAssertEqual(got["Unnamed (row 7)"], m("-65"))        // an amount with no account gets a name
+        XCTAssertEqual(got["4000"], .zero)                      // an unreadable amount is brought in as zero, and says so
+        XCTAssertEqual(got["TOTAL"], m("-25"))
+        XCTAssertTrue(p.rows[7].note.contains("Read as 0.00"))
+        XCTAssertTrue(p.rows[6].note.hasPrefix("Brought in"))
+
+        // Unchecking puts each one back, and an account row can still be left out.
+        for r in p.rows { mapping.setIncluded(false, row: r) }
+        XCTAssertEqual(mapping.forced, [])
+        XCTAssertEqual(mapping.excluded, [3])
+        p = TBImporter.evaluate(sheet, mapping, sourceName: "x")
+        XCTAssertEqual(p.tb.rows.count, 0)
+        XCTAssertEqual(p.rows[3].note, "Left out")
+        XCTAssertEqual(p.rows[0].kind, .aboveHeader)
+    }
+
+    // MARK: Filters
+
+    func testAccountTypeFilter() throws {
+        let (e, _, _) = try grouped()
+        let reports = Reports(e)
+        let t = reports.consolidating(basis: .book, hideZero: true)
+        func ids(_ table: ReportTable, _ rule: FilterCondition) -> [String] {
+            table.filtered("", filters: FilterSet(conditions: [rule])).rows.filter { $0.style == .normal }.compactMap(\.accountID)
+        }
+        let column = FilterCondition.accountTypeColumn
+        let expenses = ids(t, FilterCondition(column: column, op: .equals, value: "Expense"))
+        XCTAssertFalse(expenses.isEmpty)
+        XCTAssertTrue(expenses.allSatisfy { e.account($0)?.type == .expense })
+        XCTAssertEqual(Set(expenses), Set(e.accounts.filter { $0.type == .expense && Ledger(e).activeAccounts.contains($0.id) }.map(\.id)))
+        let notExpenses = ids(t, FilterCondition(column: column, op: .notEquals, value: "Expense"))
+        XCTAssertEqual(expenses.count + notExpenses.count, t.rows.filter { $0.style == .normal }.count)
+        XCTAssertTrue(notExpenses.allSatisfy { e.account($0)?.type != .expense })
+        // The filtered total is the net of what's shown: revenue and expenses together are net income, sign flipped.
+        let income = t.filtered("", filters: FilterSet(matchAll: false, conditions: [
+            FilterCondition(column: column, op: .equals, value: "Revenue"), FilterCondition(column: column, op: .equals, value: "Expense"),
+        ]))
+        XCTAssertEqual(money(income, row: "filtered-total", column: "Consolidated"), -Ledger(e).consolidatedNetIncome(.book))
+
+        // It works on every table of accounts: one trial balance, the grouping detail, the journal.
+        let one = reports.entityTrialBalance(entityID: "ashford", hideZero: false)
+        XCTAssertTrue(ids(one, FilterCondition(column: column, op: .equals, value: "Asset")).allSatisfy { e.account($0)?.type == .asset })
+        let detail = reports.groupingSummary(basis: .book, detail: true)
+        XCTAssertEqual(Set(ids(detail, FilterCondition(column: column, op: .equals, value: "Revenue"))),
+                       Set(e.accounts.filter { $0.type == .revenue && !Ledger(e).consolidated(.book, account: $0.id).isZero }.map(\.id)))
+        // Rows that aren't accounts (the groupings of the summary) never match a type.
+        XCTAssertEqual(ids(reports.groupingSummary(basis: .book, detail: false), FilterCondition(column: column, op: .equals, value: "Expense"))
+                        .filter { e.account($0)?.type != .expense }, [])
+        // "Is not" on text columns too.
+        XCTAssertEqual(ids(t, FilterCondition(column: "Account", op: .notEquals, value: "51160")).count, t.rows.filter { $0.style == .normal }.count - 1)
+    }
+
+    // MARK: Where a missing file was last seen
+
+    func testLocateStartsWhereTheFileLastWas() throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("tbtool-locate-\(UUID().uuidString)").standardizedFileURL
+        try fm.createDirectory(at: folder.appendingPathComponent("Workpapers/2026"), withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        func last(_ path: String) -> String? { LinkFinder.lastKnownFolder(for: FileReference(path: path), folder: folder)?.standardizedFileURL.path }
+        let base = folder.resolvingSymlinksInPath().path
+        func resolved(_ path: String) -> String? { last(path).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path } }
+        // The folder the link pointed into, while it still exists.
+        XCTAssertEqual(resolved("Workpapers/2026/Depreciation.xlsx"), base + "/Workpapers/2026")
+        // That folder is gone: the nearest one above it that is still there.
+        XCTAssertEqual(resolved("Workpapers/2026/Old/Deep/Accruals.xlsx"), base + "/Workpapers/2026")
+        XCTAssertEqual(resolved("Renamed Folder/Accruals.xlsx"), base)
+        // An absolute link outside the client folder.
+        XCTAssertEqual(resolved(folder.appendingPathComponent("Workpapers/x.pdf").path), base + "/Workpapers")
+    }
+}

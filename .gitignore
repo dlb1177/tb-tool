@@ -1,0 +1,13 @@
+# Build output
+.build/
+TB Tool.app/
+*.zip
+
+# macOS
+.DS_Store
+
+# Xcode / SwiftPM
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+DerivedData/

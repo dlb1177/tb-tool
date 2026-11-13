@@ -1,0 +1,57 @@
+{
+  "type": "eliminating",
+  "date": "2026-12-31",
+  "description": "Eliminate parent's investment in subsidiaries and equity in earnings",
+  "lines": [
+    {
+      "entity": "Ashford",
+      "account": "32000",
+      "debit": 181441.23,
+      "memo": "Subsidiary equity"
+    },
+    {
+      "entity": "Brighton",
+      "account": "32000",
+      "debit": 1079935.33,
+      "memo": "Subsidiary equity"
+    },
+    {
+      "entity": "Clayton",
+      "account": "32000",
+      "debit": 177824.67,
+      "memo": "Subsidiary equity"
+    },
+    {
+      "entity": "West Clayton",
+      "account": "32000",
+      "debit": 120555.49,
+      "memo": "Subsidiary equity"
+    },
+    {
+      "entity": "Parent",
+      "account": "49600",
+      "debit": 56864.14,
+      "memo": "Current-year equity pickup"
+    },
+    {
+      "entity": "Parent",
+      "account": "16100",
+      "credit": 216234.74
+    },
+    {
+      "entity": "Parent",
+      "account": "16200",
+      "credit": 628885.54
+    },
+    {
+      "entity": "Parent",
+      "account": "16300",
+      "credit": 235583.83
+    },
+    {
+      "entity": "Parent",
+      "account": "16400",
+      "credit": 535916.75
+    }
+  ]
+}
