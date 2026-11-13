@@ -133,6 +133,15 @@ enum Snapshotter {
             }))
         }
         if !importFiles.isEmpty { steps.append(("import-closed", { model.cancelAllImports() })) }
+        // --tb-conflict <file>: import it over the first trial balance and show the account-name review.
+        if let url = files("--tb-conflict").first, let first {
+            steps.append(("name-review", {
+                model.cancelAllImports()
+                model.queueImports([url], replacing: first.id)
+                if !model.importQueue.isEmpty { model.importQueue[0].reviewNames = true }
+            }))
+            steps.append(("name-review-closed", { model.cancelAllImports() }))
+        }
         // --tb-chart <file>: show the chart of accounts import for it.
         if let url = files("--tb-chart").first {
             steps.append(("chart-import", {

@@ -14,7 +14,8 @@ the client's folder**. No server, no account, no database.
 
 - **Imports trial balances in whatever shape they arrive**: Excel, CSV, tab-delimited text, or
   cells pasted from the clipboard. The layout is predicted and shown for you to confirm before
-  anything comes in. Account numbers are optional.
+  anything comes in. Account numbers are optional. When a file names an account differently
+  from the chart, a review lets you settle the name and the grouping, with a preview.
 - **Keeps several trial balances on one chart of accounts** (properties, companies, funds) and
   consolidates them in columns, with eliminations.
 - **Four kinds of journal entry**: adjusting (AJE), reclassifying (RJE), tax-only (TJE) and

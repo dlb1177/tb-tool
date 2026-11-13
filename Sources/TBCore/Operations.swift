@@ -454,8 +454,18 @@ extension Engagement {
 
     /// Loads an imported trial balance into an entity, replacing whatever unadjusted balances it had.
     /// New accounts join the shared chart. Journal entries are untouched.
-    public mutating func importTrialBalance(_ tb: ImportedTB, into entityID: String) throws -> [String] {
+    ///
+    /// `resolving` carries the decisions made about accounts the file names differently from the
+    /// chart, by account number (see `accountNameConflicts`). Without a decision the chart's name is
+    /// kept and a note says so.
+    public mutating func importTrialBalance(_ source: ImportedTB, into entityID: String,
+                                            resolving resolutions: [String: AccountNameResolution] = [:]) throws -> [String] {
         guard let ei = entities.firstIndex(where: { $0.id == entityID }) else { throw TBError("Trial balance not found.") }
+        // Decided on a copy, so an import that is refused leaves the chart as it was.
+        var copy = self
+        let (tb, separate) = try copy.resolveNameConflicts(resolutions, in: source)
+        self = copy
+        defer { applyGroupings(separate) }
         var warnings = tb.warnings
         var balances: [Balance] = []
         var index: [String: Int] = [:]
@@ -463,7 +473,7 @@ extension Engagement {
         for row in tb.rows {
             let incoming = Account(number: row.number, name: row.name, type: row.type)
             if let existing = account(incoming.id) {
-                if existing.name.caseInsensitiveCompare(row.name) != .orderedSame && !renamed.contains(incoming.id) {
+                if Engagement.namesDiffer(existing.name, row.name) && !renamed.contains(incoming.id) {
                     renamed.append(incoming.id)
                     if renamed.count <= 5 {
                         warnings.append("Account \(incoming.id) is “\(existing.name)” in the chart but “\(row.name)” in this file. Kept the chart name.")
@@ -494,11 +504,17 @@ extension Engagement {
 
     /// Loads a file as one trial balance's closing balances for a prior year (book and tax the same).
     /// Replaces that year if it was there already. New accounts join the shared chart.
-    public mutating func importPriorPeriod(_ tb: ImportedTB, into entityID: String, year: Int) throws -> [String] {
+    public mutating func importPriorPeriod(_ source: ImportedTB, into entityID: String, year: Int,
+                                           resolving resolutions: [String: AccountNameResolution] = [:]) throws -> [String] {
         guard let ei = entities.firstIndex(where: { $0.id == entityID }) else { throw TBError("Trial balance not found.") }
         if let current = currentYear, year >= current {
             throw TBError("\(year) isn't a prior year: this file's current year is \(current).")
         }
+        // Decided on a copy, so an import that is refused leaves the chart as it was.
+        var copy = self
+        let (tb, separate) = try copy.resolveNameConflicts(resolutions, in: source)
+        self = copy
+        defer { applyGroupings(separate) }
         var net: [String: Money] = [:]
         var order: [String] = []
         for row in tb.rows {
@@ -517,6 +533,13 @@ extension Engagement {
         entities[ei].priorPeriods.append(period)
         entities[ei].priorPeriods.sort { $0.year > $1.year }
         return tb.warnings
+    }
+
+    /// Gives accounts that came in as separate accounts the grouping chosen for them.
+    private mutating func applyGroupings(_ list: [(id: String, grouping: String?)]) {
+        for (id, grouping) in list where grouping != nil {
+            updateAccount(id) { if $0.grouping == nil { $0.grouping = grouping } }
+        }
     }
 
     private func sortPrior(_ period: inout PriorPeriod) {

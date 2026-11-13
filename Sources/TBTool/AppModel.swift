@@ -33,6 +33,8 @@ struct ImportRequest: Identifiable, Equatable {
     var suggestedName: String
     /// Set when the file was chosen as a prior year's balances.
     var priorYear: Int? = nil
+    /// Development aid: go straight to the account-name review, as if Import had been clicked.
+    var reviewNames = false
 }
 
 struct ChartImportRequest: Identifiable {
@@ -448,16 +450,17 @@ final class AppModel: ObservableObject {
     /// Brings a confirmed import in. Balances are copied into the JSON file; the source file is never needed again.
     @discardableResult
     func commitImport(_ request: ImportRequest, tb: ImportedTB, mapping: ImportMapping, header: [String]?,
-                      target: String?, newName: String, rememberLayout: Bool, priorYear: Int? = nil) -> Bool {
+                      target: String?, newName: String, rememberLayout: Bool, priorYear: Int? = nil,
+                      resolutions: [String: AccountNameResolution] = [:]) -> Bool {
         var warnings: [String] = []
         var landed: String?
         let action = priorYear.map { "Import \($0) Balances" } ?? (target == nil ? "Import \(newName)" : "Replace Trial Balance")
         let ok = mutate(action) { e in
             let id = try target ?? e.addEntity(named: newName)
             if let priorYear {
-                warnings = try e.importPriorPeriod(tb, into: id, year: priorYear)
+                warnings = try e.importPriorPeriod(tb, into: id, year: priorYear, resolving: resolutions)
             } else {
-                warnings = try e.importTrialBalance(tb, into: id)
+                warnings = try e.importTrialBalance(tb, into: id, resolving: resolutions)
             }
             landed = id
         }

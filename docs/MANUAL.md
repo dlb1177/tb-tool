@@ -233,8 +233,41 @@ be moved or deleted.
 
 **Accounts with no number** are kept by name everywhere.
 
-**New accounts** join the shared chart. If an account number already exists under a different
-name, the chart's name is kept and you are told.
+**New accounts** join the shared chart.
+
+### When the file names an account differently
+
+If the file uses an account number that is already in the chart under a different name,
+clicking Import opens a review before anything comes in. (A difference only in capitals or
+spacing is ignored.)
+
+![Reviewing account names](images/name-review.png)
+
+Each such account is one row: its number, its name in the chart and which trial balances
+already use it, its name and amount in this file, and three things to decide.
+
+- **Keep**
+  - *The chart's name*: it is the same account and the chart is right. This is the default.
+  - *This file's name*: it is the same account and the file is right. The account is renamed
+    for every trial balance.
+  - *Both — it's a different account*: the file's account comes in as a new account under its
+    own number, and the account in the chart stays as it is. The next free number is suggested;
+    type another, or clear it to keep the new account by name. A number that is already taken
+    is refused.
+- **Grouping**, when the account in the chart has one
+  - For the same account, *Keep* leaves the grouping. Untick it and the account goes back to
+    ungrouped, so it turns up again on the Accounts screen to be grouped afresh.
+  - For a different account, *Give it … too* starts the new account in the same grouping.
+    Unticked, it starts ungrouped.
+- **After the import** previews the result: the number and name the chart will hold, its
+  grouping (or "Not grouped"), and NEW beside an account that will be added.
+
+**Keep the Chart's Names**, **Use This File's Names**, **Keep Every Grouping** and **Clear
+Every Grouping** set every row at once. **Back to the Layout** returns to the first step with
+your decisions kept. Nothing changes until you click Import, and the import is one undoable
+step.
+
+The same review appears when importing a prior year's balances.
 
 ### Other ways to create a trial balance
 
@@ -853,7 +886,7 @@ inside the app bundle at `TB Tool.app/Contents/MacOS/tbcli`, and is built by `sw
 
 ```
 tbcli new <file.json> [--name "Client"] [--period YYYY-MM-DD]
-tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY]
+tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names]
 tbcli map <file.json> <mapping.csv>
 tbcli coa-export <file.json> <out.json|out.csv>
 tbcli coa-import <file.json> <chart.json|csv|xlsx|other TB.json> [--overwrite] [--add-missing] [--no-types]
@@ -870,7 +903,7 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | Command | What it does |
 |---|---|
 | `new` | Creates an empty file with the built-in grouping list. |
-| `import` | Imports one trial balance, detecting the layout (or using a saved one). The trial balance is named with `--entity`, or from the file name; if one by that name exists, its balances are replaced. With `--prior-year`, the file is that year's closing balances. Prints what was read and what was skipped. |
+| `import` | Imports one trial balance, detecting the layout (or using a saved one). The trial balance is named with `--entity`, or from the file name; if one by that name exists, its balances are replaced. With `--prior-year`, the file is that year's closing balances. An account the file names differently from the chart keeps the chart's name, and each is reported; with `--use-file-names` the chart takes the file's names instead. Prints what was read and what was skipped. |
 | `map` | Assigns groupings from a two-column CSV: `account,grouping`. The grouping may be an id, a code, or "code name". An empty grouping clears the assignment. |
 | `coa-export` / `coa-import` | The chart of accounts with types and groupings. Import fills in ungrouped accounts unless `--overwrite`; `--add-missing` adds accounts; `--no-types` leaves types alone. |
 | `groupings-export` / `groupings-import` | The grouping list. Import replaces the list unless `--merge`. |
@@ -1012,6 +1045,10 @@ Security ▸ Open Anyway. See [section 3](#3-installing-and-opening).
 **The import read my file wrongly.** Set the header row, then the role above each column.
 Change the balance signs if debits and credits are reversed. Tick or untick rows. If a column
 of account types is present, give it the Account Type role.
+
+**The import asked me about account names.** The file uses a number the chart already has,
+under another name. Choose which name stands, or bring it in as a different account. See
+[section 5](#5-importing-trial-balances).
 
 **A trial balance is out of balance after import.** Open the import again with **Show only rows
 that are left out or flagged**: a total line may have been brought in, or an account left out.

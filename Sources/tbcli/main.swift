@@ -8,11 +8,13 @@ let usage = """
 tbcli — work with a TB Tool trial balance file
 
   tbcli new <file.json> [--name "Client"] [--period YYYY-MM-DD]
-  tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY]
+  tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names]
                                                            import (or re-import) one trial balance; the
                                                            layout is detected (or taken from a saved one).
                                                            With --prior-year the file is that year's closing
-                                                           balances (PP1, PP2…) instead of this year's
+                                                           balances (PP1, PP2…) instead of this year's.
+                                                           An account the file names differently from the chart
+                                                           keeps the chart's name unless --use-file-names
   tbcli map <file.json> <mapping.csv>                      assign groupings: account,grouping
   tbcli coa-export <file.json> <out.json|out.csv>          export the chart of accounts with groupings
   tbcli coa-import <file.json> <chart.json|csv|xlsx|other TB.json> [--overwrite] [--add-missing] [--no-types]
@@ -48,7 +50,8 @@ func positional(_ args: [String]) -> [String] {
             continue
         }
         if a.hasPrefix("--") {
-            skip = true
+            // Switches stand alone; every other option is followed by its value.
+            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names"].contains(a)
             continue
         }
         out.append(a)
@@ -94,7 +97,16 @@ do {
         }
         let priorYear = option("--prior-year", in: rest).flatMap { Int($0) }
         if option("--prior-year", in: rest) != nil && priorYear == nil { fail("--prior-year needs a year, e.g. 2025.") }
-        let warnings = try priorYear.map { try e.importPriorPeriod(tb, into: id, year: $0) } ?? e.importTrialBalance(tb, into: id)
+        // Accounts the file names differently from the chart: the chart's name stands (and is reported)
+        // unless the file's names were asked for.
+        var decisions: [String: AccountNameResolution] = [:]
+        let renames = e.accountNameConflicts(in: tb)
+        if rest.contains("--use-file-names") {
+            for c in renames { decisions[c.accountID] = AccountNameResolution(.useFileName) }
+        }
+        let warnings = try priorYear.map { try e.importPriorPeriod(tb, into: id, year: $0, resolving: decisions) }
+            ?? e.importTrialBalance(tb, into: id, resolving: decisions)
+        if !decisions.isEmpty { renames.forEach { print("  renamed \($0.number): “\($0.chartName)” → “\($0.fileName)”") } }
         try Store.save(e, to: url)
         let m = result.mapping
         func letter(_ i: Int) -> String {

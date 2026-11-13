@@ -29,6 +29,10 @@ struct ImportWizard: View {
     @State private var showOnlyIssues = false
     /// 0 for this year's unadjusted balances, otherwise the prior year the file holds.
     @State private var period: Int
+    /// Set once Import is clicked and the file names accounts differently from the chart: the
+    /// second step, where each difference is decided.
+    @State private var conflicts: [AccountNameConflict]?
+    @State private var resolutions: [String: AccountNameResolution] = [:]
 
     private static let newTarget = "__new__"
 
@@ -52,16 +56,57 @@ struct ImportWizard: View {
 
     var body: some View {
         let p = preview
-        VStack(spacing: 0) {
-            header
-            Divider()
-            settings
-            Divider()
-            ImportPreviewGrid(sheet: sheet, preview: p, mapping: $mapping, showOnlyIssues: showOnlyIssues)
-            Divider()
-            footer(p)
+        Group {
+            if let conflicts {
+                NameConflictReview(engagement: engagement, conflicts: conflicts, resolutions: $resolutions, sourceName: request.sourceName,
+                                   importLabel: p.tb.total.isZero ? "Import \(p.tb.accountCount) Accounts" : "Import Out of Balance",
+                                   onBack: { self.conflicts = nil },
+                                   onCancel: { model.finishImport(request) },
+                                   onImport: { commit(p.tb) })
+            } else {
+                VStack(spacing: 0) {
+                    header
+                    Divider()
+                    settings
+                    Divider()
+                    ImportPreviewGrid(sheet: sheet, preview: p, mapping: $mapping, showOnlyIssues: showOnlyIssues)
+                    Divider()
+                    footer(p)
+                }
+            }
         }
         .frame(minWidth: 980, minHeight: 560)
+        .onAppear {
+            guard request.reviewNames else { return }
+            // For documentation pictures: open on the review with one of each kind of decision made.
+            startImport(p.tb)
+            if let found = conflicts, found.count >= 4 {
+                resolutions[found[1].accountID] = AccountNameResolution(.useFileName)
+                resolutions[found[2].accountID] = AccountNameResolution(.separateAccount(number: engagement.suggestedSeparateNumber(for: found[2].number)))
+                resolutions[found[3].accountID] = AccountNameResolution(.keepChartName, keepGrouping: false)
+            }
+        }
+    }
+
+    /// Import was clicked. If the file names any account differently from the chart, those are
+    /// decided first; otherwise it comes straight in.
+    private func startImport(_ tb: ImportedTB) {
+        let found = engagement.accountNameConflicts(in: tb)
+        if found.isEmpty {
+            commit(tb)
+        } else {
+            // Decisions already made (the person went back to the layout and returned) are kept.
+            resolutions = resolutions.filter { key, _ in found.contains { $0.accountID == key } }
+            for c in found where resolutions[c.accountID] == nil { resolutions[c.accountID] = AccountNameResolution() }
+            conflicts = found
+        }
+    }
+
+    private func commit(_ tb: ImportedTB) {
+        let name = newName.trimmingCharacters(in: .whitespaces)
+        model.commitImport(request, tb: tb, mapping: mapping, header: mapping.headerRow.map { sheet.rows[$0] },
+                           target: target == Self.newTarget ? nil : target, newName: name, rememberLayout: remember,
+                           priorYear: period == 0 ? nil : period, resolutions: conflicts == nil ? [:] : resolutions)
     }
 
     // MARK: Header
@@ -221,12 +266,8 @@ struct ImportWizard: View {
                 }
                 Button(model.importQueue.count > 1 ? "Skip This File" : "Cancel") { model.finishImport(request) }
                     .keyboardShortcut(.cancelAction)
-                Button(tb.total.isZero ? "Import \(tb.accountCount) Accounts" : "Import Out of Balance") {
-                    let name = newName.trimmingCharacters(in: .whitespaces)
-                    model.commitImport(request, tb: tb, mapping: mapping, header: mapping.headerRow.map { sheet.rows[$0] },
-                                       target: target == Self.newTarget ? nil : target, newName: name, rememberLayout: remember,
-                                       priorYear: period == 0 ? nil : period)
-                }
+                Button(tb.total.isZero ? "Import \(tb.accountCount) Accounts" : "Import Out of Balance") { startImport(tb) }
+                    .help("If the file names any account differently from the chart, you'll be asked which name to keep before anything comes in.")
                 .keyboardShortcut(.defaultAction)
                 .disabled(!p.isUsable || (target == Self.newTarget && newName.trimmingCharacters(in: .whitespaces).isEmpty))
             }

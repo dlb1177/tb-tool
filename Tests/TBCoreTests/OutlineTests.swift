@@ -471,6 +471,107 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(p.rows[0].kind, .aboveHeader)
     }
 
+    // MARK: An account named differently in a file than in the chart
+
+    func testAccountNameConflictsAreFoundAndResolved() throws {
+        var e = try sample()
+        e.setGrouping("L01", forAccounts: ["10001"])
+        e.setGrouping("807", forAccounts: ["51080"])
+        // A new file for Ashford: three accounts carry a different name, one differs only in capitals,
+        // one is new, and one appears on two rows.
+        let csv = """
+        Account,Debit,Credit
+        10001 Operating Account,500.00,
+        51080 Property Insurance,40.00,
+        51080 Property Insurance,60.00,
+        51100 Loan Interest,25.00,
+        51040 BANK CHARGES   & fees,5.00,
+        59999 Brand New Account,10.00,
+        32000 Member's Equity - Summit Storage LLC,,640.00
+        """
+        let tb = try TBImporter.parse(text: csv, sourceName: "Ashford revised.csv")
+        let conflicts = e.accountNameConflicts(in: tb)
+        XCTAssertEqual(conflicts.map(\.number), ["10001", "51080", "51100"])
+        XCTAssertEqual(conflicts[0].chartName, "Ashford Checking (1042) - 2")
+        XCTAssertEqual(conflicts[0].fileName, "Operating Account")
+        XCTAssertEqual(conflicts[0].grouping, "L01")
+        XCTAssertEqual(conflicts[0].usedBy, ["Ashford"])
+        XCTAssertEqual(conflicts[1].amount, m("100"))  // both rows
+        XCTAssertEqual(conflicts[1].usedBy.count, 4)   // every property has insurance
+        XCTAssertNil(conflicts[2].grouping)
+
+        // The preview of each choice, before anything is imported.
+        XCTAssertEqual(e.outcome(of: AccountNameResolution(.keepChartName), for: conflicts[0]),
+                       AccountNameOutcome(number: "10001", name: "Ashford Checking (1042) - 2", grouping: "L01", isNew: false, problem: nil))
+        XCTAssertEqual(e.outcome(of: AccountNameResolution(.useFileName, keepGrouping: false), for: conflicts[0]),
+                       AccountNameOutcome(number: "10001", name: "Operating Account", grouping: nil, isNew: false, problem: nil))
+        XCTAssertEqual(e.outcome(of: AccountNameResolution(.separateAccount(number: "10009")), for: conflicts[0]),
+                       AccountNameOutcome(number: "10009", name: "Operating Account", grouping: "L01", isNew: true, problem: nil))
+        XCTAssertNotNil(e.outcome(of: AccountNameResolution(.separateAccount(number: "10001")), for: conflicts[0]).problem)  // the same number
+        XCTAssertNotNil(e.outcome(of: AccountNameResolution(.separateAccount(number: "14100")), for: conflicts[0]).problem)  // taken by Land
+        XCTAssertNil(e.outcome(of: AccountNameResolution(.separateAccount(number: "")), for: conflicts[0]).problem)          // kept by name
+
+        // With no decisions, the chart's names stand and the import says so (what the command line does).
+        var plain = e
+        let notes = try plain.importTrialBalance(tb, into: "ashford")
+        XCTAssertEqual(notes.filter { $0.contains("Kept the chart name") }.count, 3)
+        XCTAssertEqual(plain.account("10001")?.name, "Ashford Checking (1042) - 2")
+
+        // Decided one way each: keep the chart's name but drop the grouping; take the file's name and keep
+        // the grouping; and bring the third in as a different account that starts with the same grouping.
+        var decided = e
+        decided.setGrouping("809", forAccounts: ["51100"])
+        let quiet = try decided.importTrialBalance(tb, into: "ashford", resolving: [
+            "10001": AccountNameResolution(.keepChartName, keepGrouping: false),
+            "51080": AccountNameResolution(.useFileName),
+            "51100": AccountNameResolution(.separateAccount(number: "51105")),
+        ])
+        XCTAssertFalse(quiet.contains { $0.contains("Kept the chart name") })
+        XCTAssertEqual(decided.account("10001")?.name, "Ashford Checking (1042) - 2")
+        XCTAssertNil(decided.account("10001")?.grouping)
+        XCTAssertEqual(decided.account("51080")?.name, "Property Insurance")  // renamed for every trial balance
+        XCTAssertEqual(decided.account("51080")?.grouping, "807")
+        XCTAssertEqual(decided.account("51100")?.name, "Interest Expenses")   // the original is untouched
+        XCTAssertEqual(decided.account("51105")?.name, "Loan Interest")
+        XCTAssertEqual(decided.account("51105")?.grouping, "809")
+        XCTAssertEqual(decided.account("51105")?.type, .expense)
+        XCTAssertEqual(decided.account("51040")?.name, "Bank Charges & Fees") // capitals and spacing aren't a conflict
+        let l = Ledger(decided)
+        XCTAssertEqual(l.value(.unadjusted, entity: "ashford", account: "51080"), m("100"))
+        XCTAssertEqual(l.value(.unadjusted, entity: "ashford", account: "51105"), m("25"))
+        XCTAssertEqual(l.value(.unadjusted, entity: "ashford", account: "51100"), .zero)
+        XCTAssertEqual(l.value(.unadjusted, entity: "clayton", account: "51100"), Ledger(e).value(.unadjusted, entity: "clayton", account: "51100"))
+        XCTAssertEqual(l.total(.unadjusted, entity: "ashford"), .zero)
+        XCTAssertEqual(decided.issues(), [])
+        XCTAssertEqual(decided.accountNameConflicts(in: tb).map(\.number), ["10001", "51100"])  // importing it again would ask again
+        XCTAssertEqual(try Store.decode(Store.encode(decided)), decided)
+
+        // A separate account with no number is kept by name, ungrouped if asked.
+        var byName = e
+        _ = try byName.importTrialBalance(tb, into: "ashford", resolving: ["51100": AccountNameResolution(.separateAccount(number: ""), keepGrouping: false)])
+        XCTAssertEqual(byName.account("Loan Interest")?.number, "")
+        XCTAssertNil(byName.account("Loan Interest")?.grouping)
+        XCTAssertEqual(Ledger(byName).value(.unadjusted, entity: "ashford", account: "Loan Interest"), m("25"))
+
+        // A number that is taken is refused, and nothing changes.
+        var refused = e
+        XCTAssertThrowsError(try refused.importTrialBalance(tb, into: "ashford", resolving: [
+            "51080": AccountNameResolution(.useFileName), "51100": AccountNameResolution(.separateAccount(number: "14100")),
+        ]))
+        XCTAssertEqual(refused, e)
+
+        // The same decisions apply to a prior year's balances.
+        var prior = e
+        _ = try prior.importPriorPeriod(tb, into: "ashford", year: 2025, resolving: [
+            "10001": AccountNameResolution(.useFileName), "51100": AccountNameResolution(.separateAccount(number: "51105"), keepGrouping: false),
+        ])
+        XCTAssertEqual(prior.account("10001")?.name, "Operating Account")
+        XCTAssertEqual(prior.account("10001")?.grouping, "L01")
+        XCTAssertEqual(Ledger(prior).prior(.book, year: 2025, entity: "ashford", account: "51105"), m("25"))
+        XCTAssertEqual(Ledger(prior).prior(.book, year: 2025, entity: "ashford", account: "51100"), .zero)
+        XCTAssertEqual(prior.account("51080")?.name, "Insurance")  // not decided: the chart's name stands
+    }
+
     // MARK: Filters
 
     func testAccountTypeFilter() throws {
