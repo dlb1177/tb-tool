@@ -74,6 +74,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var candidates: [URL] = []
     @Published var selection: SidebarItem? = .consolidated
     @Published var status: String = ""
+    /// Set to send the Accounts screen to its ungrouped accounts; the screen clears it once it has.
+    @Published var showUngroupedRequested = false
     @Published var importQueue: [ImportRequest] = [] {
         didSet { syncImportWindow() }
     }
@@ -667,6 +669,13 @@ final class AppModel: ObservableObject {
                             size: NSSize(width: 500, height: 350), minSize: NSSize(width: 460, height: 320), frameName: "grouping-editor") {
             GroupingSheet(draft: draft, sections: sections, source: source, commit: commit)
         }
+    }
+
+    /// Opens the Accounts screen filtered to the accounts that have no grouping yet.
+    func showUngroupedAccounts() {
+        showUngroupedRequested = true
+        selection = .accounts
+        NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false }?.makeKeyAndOrderFront(nil)
     }
 
     /// Accounts whose type disagrees with their grouping's, to be settled grouping by grouping.

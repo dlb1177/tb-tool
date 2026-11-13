@@ -234,11 +234,18 @@ do {
 
     case "check":
         guard pos.count == 1 else { fail(usage) }
-        let issues = try Store.load(URL(fileURLWithPath: pos[0])).issues()
+        let checked = try Store.load(URL(fileURLWithPath: pos[0]))
+        let issues = checked.issues()
+        // Not a fault in the file, but work left to do: say so either way.
+        let ungrouped = checked.ungroupedAccounts
+        let note = ungrouped.isEmpty ? nil
+            : "\(ungrouped.count) account\(ungrouped.count == 1 ? " isn't" : "s aren't") grouped: \(ungrouped.prefix(8).map(\.display).joined(separator: ", "))\(ungrouped.count > 8 ? ", …" : "")"
         if issues.isEmpty {
             print("Clean: no problems found.")
+            if let note { print(note) }
         } else {
             issues.forEach { print($0) }
+            if let note { print(note) }
             exit(2)
         }
 

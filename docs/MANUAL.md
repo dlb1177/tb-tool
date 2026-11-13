@@ -495,6 +495,11 @@ balance, and which trial balances use the account. It is built for hundreds of a
 an account number range (from 51000 to 51999; a short "to" such as 5 includes everything
 starting with 5); and the **Filters** rule builder.
 
+**Ungrouped accounts raise an alert.** While any account has no grouping, the data check
+counts it, the sidebar badge shows how many, and a banner on this screen and on the Grouping
+List screen names the first few. **Show Them** (or **Show Ungrouped Accounts** from the data
+check) narrows this screen to exactly those accounts, ready to select and group with ⌘G.
+
 **Changing many at once:** select accounts (⇧-click, ⌘-click, ⌘A, or **Select All Shown**),
 then:
 
@@ -803,6 +808,8 @@ counts the problems; click it to read them. It reports:
 - a code used by more than one grouping;
 - a grouping holding accounts of another type than the grouping's, with a **Review Account
   Types…** button;
+- accounts that have no grouping, with a **Show Ungrouped Accounts** button (counted as one
+  issue however many there are);
 - a subgroup whose grouping is missing;
 - linked files that cannot be found, with a **Fix Links…** button.
 
@@ -954,7 +961,7 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | `post` | Posts one journal entry from a JSON file. It is refused, with every reason, if it breaks a posting rule. |
 | `links` | Lists linked files that cannot be found. Exits with status 2 if there are any. |
 | `rollforward` | Writes next year's file. The source is unchanged. |
-| `check` | Lists every data-check problem, or says the file is clean. |
+| `check` | Lists every data-check problem, or says the file is clean. Also says how many accounts aren't grouped, and which. |
 | `summary` | Balance check and net income per trial balance and consolidated. |
 | `export` | `.xlsx` writes the full workbook; `.csv` writes the long-format data. |
 

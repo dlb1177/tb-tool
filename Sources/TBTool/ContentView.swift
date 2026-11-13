@@ -281,7 +281,8 @@ struct Sidebar: View {
             showIssues = true
         } label: {
             HStack(spacing: 6) {
-                let problems = model.issues.count + model.brokenLinks.count
+                // Ungrouped accounts count once, however many there are.
+                let problems = model.issues.count + model.brokenLinks.count + ((model.engagement?.ungroupedAccounts.isEmpty ?? true) ? 0 : 1)
                 if problems == 0 {
                     CheckBadge(ok: true, text: "Data check: clean")
                 } else {
@@ -310,6 +311,18 @@ struct Sidebar: View {
                         }
                     }
                 }
+                if let e = model.engagement, !e.ungroupedAccounts.isEmpty {
+                    let n = e.ungroupedAccounts.count
+                    HStack {
+                        Label("\(n) account\(n == 1 ? " isn't" : "s aren't") grouped.", systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                        Spacer()
+                        Button("Show Ungrouped Accounts") {
+                            showIssues = false
+                            model.showUngroupedAccounts()
+                        }
+                    }
+                }
                 if let e = model.engagement, !e.typeConflicts.isEmpty {
                     HStack {
                         Label("Some accounts have a type that differs from their grouping's.", systemImage: "exclamationmark.triangle")
@@ -321,7 +334,7 @@ struct Sidebar: View {
                         }
                     }
                 }
-                if model.issues.isEmpty && !model.brokenLinks.isEmpty {
+                if model.issues.isEmpty && (!model.brokenLinks.isEmpty || !(model.engagement?.ungroupedAccounts.isEmpty ?? true)) {
                     EmptyView()
                 } else if model.issues.isEmpty {
                     Text("Every trial balance is in balance, every entry balances and follows the posting rules, and every reference points at something that exists.")

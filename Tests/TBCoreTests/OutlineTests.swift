@@ -405,6 +405,24 @@ final class OutlineTests: XCTestCase {
         XCTAssertEqual(opened.groupings.filter { $0.type != nil }.count, DefaultGroupings.list.filter { $0.type != nil }.count)
     }
 
+    // MARK: Accounts with no grouping
+
+    func testUngroupedAccountsAreListed() throws {
+        var e = try sample()
+        XCTAssertEqual(e.ungroupedAccounts.count, e.accounts.count)  // nothing is grouped straight after an import
+        XCTAssertEqual(e.ungroupedAccounts.map(\.id), e.sortedAccounts.map(\.id))
+        _ = e.applyGroupingMap(csv: try String(contentsOf: TBCoreTests.root.appendingPathComponent("grouping-map.csv"), encoding: .utf8))
+        XCTAssertEqual(e.ungroupedAccounts, [])
+        // Clearing a grouping, deleting one, or adding an account brings the alert back.
+        e.setGrouping(nil, forAccounts: ["10001"])
+        e.deleteGrouping("807")
+        _ = try e.addAccount(number: "59999", name: "Brand New", type: .expense)
+        XCTAssertEqual(e.ungroupedAccounts.map(\.id), ["10001", "51080", "59999"])
+        XCTAssertEqual(e.issues(), [])  // work left to do, not a fault in the file
+        e.setGrouping("815-MISC", forAccounts: ["59999"])
+        XCTAssertEqual(e.ungroupedAccounts.map(\.id), ["10001", "51080"])
+    }
+
     // MARK: One code, one grouping
 
     func testGroupingCodesMustBeUnique() throws {

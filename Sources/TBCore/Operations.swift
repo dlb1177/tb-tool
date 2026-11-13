@@ -130,6 +130,12 @@ extension Engagement {
         return a
     }
 
+    /// Accounts with no grouping (or one that isn't in the list), in chart order. Until they are
+    /// grouped they sit outside every tax line, so the app keeps an alert up while there are any.
+    public var ungroupedAccounts: [Account] {
+        sortedAccounts.filter { grouping($0.grouping) == nil }
+    }
+
     public func isAccountUsed(_ id: String) -> Bool {
         entities.contains { $0.balances.contains { $0.account == id } }
             || entities.contains { $0.priorPeriods.contains { $0.balances.contains { $0.account == id } } }

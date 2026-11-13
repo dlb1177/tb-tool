@@ -70,6 +70,7 @@ struct AccountsView: View {
                 Divider()
                 DraftBanner()
                 TypeConflictBanner()
+                if status != "ungrouped" { UngroupedBanner(show: showUngrouped) }
                 filterBar(e)
                 Divider()
                 bulkBar(e, picked: picked, shown: shown)
@@ -80,6 +81,8 @@ struct AccountsView: View {
                     table(e, shown)
                 }
             }
+            .onAppear { if model.showUngroupedRequested { showUngrouped() } }
+            .onChange(of: model.showUngroupedRequested) { _, asked in if asked { showUngrouped() } }
             .confirmationDialog("Delete \(picked.count) account\(picked.count == 1 ? "" : "s")?", isPresented: $confirmDelete) {
                 Button("Delete", role: .destructive) {
                     if model.mutate("Delete Accounts", { e in try picked.forEach { try e.deleteAccount($0) } }) { selection = [] }
@@ -88,6 +91,15 @@ struct AccountsView: View {
                 Text("Only accounts with no balances and no journal lines can be deleted.")
             }
         }
+    }
+
+    /// Narrows the list to the accounts with no grouping, clearing whatever else was filtering it.
+    private func showUngrouped() {
+        search = ""; typeFilter = "all"; sectionFilter = "all"; entityFilter = "all"; rangeFrom = ""; rangeTo = ""
+        rules = FilterSet()
+        status = "ungrouped"
+        selection = []
+        model.showUngroupedRequested = false
     }
 
     // MARK: Rows
@@ -476,6 +488,7 @@ struct GroupingsView: View {
                 }
                 Divider()
                 TypeConflictBanner()
+                UngroupedBanner()
                 if let (code, sharing) = e.sharedGroupingCodes.first {
                     // A file from before every code had to be unique.
                     HStack(spacing: 10) {
