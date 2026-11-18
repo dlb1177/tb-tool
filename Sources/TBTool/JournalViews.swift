@@ -245,6 +245,8 @@ struct JournalEditor: View {
     @State private var baseline: JournalEntry?
     @State private var confirmDelete = false
     @State private var dropTargeted = false
+    /// Set while the type picker is being put back after a change that isn't allowed.
+    @State private var revertingType = false
 
     init(request: EditorRequest, engagement: Engagement, closeGuard: CloseGuard) {
         self.request = request
@@ -282,7 +284,7 @@ struct JournalEditor: View {
             }
             if d.rounded || c.rounded { errors.append("Line \(i + 1): amounts can have at most two decimals.") }
             if !d.value.isZero && !c.value.isZero { errors.append("Line \(i + 1): enter a debit or a credit, not both.") }
-            out.append(JELine(entity: type == .eliminating ? l.entity : entityID,
+            out.append(JELine(entity: type.canSpanTrialBalances ? l.entity : entityID,
                               account: l.accountID ?? "", amount: d.value - c.value, memo: l.memo.trimmingCharacters(in: .whitespaces)))
         }
         var je = request.entry
@@ -362,7 +364,7 @@ struct JournalEditor: View {
                 LabeledField("Date") {
                     DatePicker("", selection: $date, displayedComponents: .date).labelsHidden()
                 }
-                if type == .eliminating {
+                if type.canSpanTrialBalances {
                     LabeledField("Posts to") {
                         Text("Chosen on each line").foregroundStyle(.secondary).frame(height: 22)
                     }
@@ -392,32 +394,71 @@ struct JournalEditor: View {
                     .font(.callout)
                     .foregroundStyle(.orange)
             }
-            Text(typeHelp).font(.callout).foregroundStyle(.secondary)
+            Text(typeHelp).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if type == .reclassifying, let note = allocationNote {
+                Label(note, systemImage: "arrow.left.arrow.right").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(16)
+    }
+
+    /// For a reclassifying entry that names several trial balances: what each one ends up with.
+    private var allocationNote: String? {
+        let entry = built.entry
+        var net: [String: Money] = [:]
+        var order: [String] = []
+        for l in entry.lines {
+            if net[l.entity] == nil { order.append(l.entity) }
+            net[l.entity, default: .zero] += l.amount
+        }
+        guard order.count > 1 else { return nil }
+        let parts = order.filter { !net[$0]!.isZero }.map { "\(engagement.entity($0)?.name ?? $0) \(net[$0]!.formatted)" }
+        if parts.isEmpty { return "This entry names \(order.count) trial balances and balances within each one." }
+        return "Moves between trial balances: \(parts.joined(separator: ", ")). Each of those is out of balance by that much on its own; the consolidation stays in balance."
     }
 
     private var typeHelp: String {
         switch type {
         case .adjusting: return "Posts to one trial balance. Shows in the AJE column and flows into Adjusted, Final, and Tax."
-        case .reclassifying: return "Posts to one trial balance. Shows in the RJE column and flows into Final and Tax."
+        case .reclassifying: return "Shows in the RJE column and flows into Final and Tax. Pick the trial balance on each line: keep them the same to reclassify within one, or name several to allocate an amount across them in one entry."
         case .taxOnly: return "Posts to one trial balance. Shows in the TJE column and only changes the Tax basis."
         case .eliminating: return "The only entry type that can span trial balances: pick one on each line. It shows in the Eliminations column of the consolidation and leaves each trial balance itself unchanged."
         }
     }
 
     private func typeChanged(from old: JEType, to new: JEType) {
+        // An adjusting or tax-only entry posts to one trial balance, so an entry that names several
+        // can't be turned into one. Put the type back and say why.
+        if !new.canSpanTrialBalances && old.canSpanTrialBalances && usedEntities.count > 1 {
+            let names = usedEntities.map { engagement.entity($0)?.name ?? $0 }.joined(separator: ", ")
+            revertingType = true
+            type = old
+            model.alert = AlertInfo(title: "\(new == .adjusting ? "An adjusting" : "A tax-only") entry posts to one trial balance",
+                                    message: "This entry has lines on \(usedEntities.count) trial balances (\(names)). Put every line on the same trial balance first, or post a separate entry for each.")
+            return
+        }
+        if revertingType {
+            revertingType = false
+            return
+        }
         // Keep a hand-typed number; otherwise follow the type's own sequence.
         let wasAutomatic = number == request.entry.number || number == engagement.nextEntryNumber(for: old, excluding: request.entry.id)
         if wasAutomatic {
             number = (new == request.entry.type && !request.isNew) ? request.entry.number
                                                                     : engagement.nextEntryNumber(for: new, excluding: request.entry.id)
         }
-        if new == .eliminating {
+        if new.canSpanTrialBalances && !old.canSpanTrialBalances {
             for i in lines.indices { lines[i].entity = entityID }
-        } else if old == .eliminating, let first = lines.first?.entity, engagement.entity(first) != nil {
+        } else if !new.canSpanTrialBalances && old.canSpanTrialBalances, let first = usedEntities.first ?? lines.first?.entity, engagement.entity(first) != nil {
             entityID = first
         }
+    }
+
+    /// The trial balances named on lines that have something on them.
+    private var usedEntities: [String] {
+        var seen = Set<String>()
+        return lines.filter { $0.accountID != nil || !$0.debit.trimmingCharacters(in: .whitespaces).isEmpty || !$0.credit.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map(\.entity).filter { seen.insert($0).inserted }
     }
 
     // MARK: Lines
@@ -426,7 +467,7 @@ struct JournalEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text("#").frame(width: 20, alignment: .trailing)
-                if type == .eliminating { Text("Trial Balance").frame(width: 160, alignment: .leading) }
+                if type.canSpanTrialBalances { Text("Trial Balance").frame(width: 160, alignment: .leading) }
                 Text("Account").frame(maxWidth: .infinity, alignment: .leading)
                 Text("Debit").frame(width: 112, alignment: .trailing)
                 Text("Credit").frame(width: 112, alignment: .trailing)
@@ -443,7 +484,7 @@ struct JournalEditor: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .frame(width: 20, alignment: .trailing)
-                    if type == .eliminating {
+                    if type.canSpanTrialBalances {
                         Picker("", selection: line.entity) {
                             ForEach(engagement.entities) { Text($0.name).tag($0.id) }
                         }
@@ -643,7 +684,7 @@ struct JournalEditor: View {
                     .keyboardShortcut(.cancelAction)
                 if request.isNew {
                     Button("Post & New") {
-                        if post(entry) { model.newEntry(type, entityID: type == .eliminating ? nil : entityID) }
+                        if post(entry) { model.newEntry(type, entityID: type.canSpanTrialBalances ? nil : entityID) }
                     }
                     .keyboardShortcut(.return, modifiers: [.command, .shift])
                     .disabled(!result.errors.isEmpty)

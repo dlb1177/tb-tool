@@ -27,6 +27,16 @@ enum Snapshotter {
         steps.append(("accounts", { model.selection = .accounts }))
         steps.append(("groupings", { model.selection = .groupings }))
         steps.append(("reports", { model.selection = .reports }))
+        steps.append(("binder", { model.selection = .binder }))
+        if let tree = model.binder, let target = tree.unindexed.first(where: { !$0.isFolder }) ?? tree.files.first(where: { !$0.parentPath.isEmpty }) {
+            steps.append(("binder-index", { model.showSetIndex(for: target.path) }))
+        }
+        if let first {
+            steps.append(("entity-details", {
+                Windows.shared.closeAll()
+                model.showEntityDetails(first.id)
+            }))
+        }
         if let entry = model.engagement?.journalEntries.first {
             steps.append(("editor", { model.editEntry(entry.id) }))
             steps.append(("activity", {
@@ -292,10 +302,18 @@ enum Snapshotter {
             }
             steps.append(("rolled-forward", {
                 guard let folder = model.folder, let year = model.engagement?.currentYear else { return }
-                let dest = folder.appendingPathComponent("Rolled \(year + 1).json")
-                if model.rollForward(RollForwardOptions(), to: dest) { model.open(dest) }
+                // The binder goes too: next year's folder beside this one, every file by its default.
+                let next = BinderRoller.defaultDestination(for: folder, fromYear: year, toYear: year + 1)
+                let dest = next.appendingPathComponent(Engagement.rolledFileName(model.fileURL?.lastPathComponent ?? "TB.json", from: year, to: year + 1))
+                var choices = model.binder.map(BinderRoller.defaultChoices) ?? [:]
+                // One of each: the first file a placeholder, the last left behind.
+                if let files = model.binder?.files, files.count >= 2 {
+                    choices[files[0].path] = .placeholder
+                    choices[files[files.count - 1].path] = .skip
+                }
+                if model.rollForward(RollForwardOptions(), to: dest, binderChoices: model.binder == nil ? nil : choices) { model.open(dest) }
                 model.alert = nil
-                model.selection = .consolidated
+                model.selection = .binder
             }))
             steps.append(("rolled-journal", { model.selection = .journal }))
         }

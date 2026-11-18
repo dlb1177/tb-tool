@@ -212,7 +212,9 @@ struct ConsolidatedView: View {
     }
 
     private func checks(_ ledger: Ledger, _ basis: Basis) -> some View {
-        let outOfBalance = ledger.engagement.entities.filter { !ledger.total(basis == .book ? .book : .tax, entity: $0.id).isZero }
+        // A reclassifying entry that spans trial balances moves amounts between them on purpose, so a
+        // trial balance is only "out of balance" beyond what was reclassified to or from it.
+        let outOfBalance = ledger.engagement.entities.filter { !ledger.imbalance(basis, entity: $0.id).isZero }
         let elim = ledger.eliminationsTotal()
         return HStack(spacing: 18) {
             CheckBadge(ok: outOfBalance.isEmpty,
@@ -258,6 +260,8 @@ struct EntityView: View {
                     }
                     .fixedSize()
                     Menu {
+                        Button("Name and Activity Number…") { model.showEntityDetails(entityID) }
+                        Divider()
                         Button("Edit Unadjusted Balances…") { model.showBalanceEditor(entityID: entityID, priorYear: nil) }
                         Button("Replace Unadjusted Balances from File…") { model.importPanel(replacing: entityID) }
                         if let year = e.currentYear {
@@ -304,7 +308,8 @@ struct EntityView: View {
     }
 
     private func subtitle(_ entity: Entity) -> String {
-        let edited = entity.editedAt.isEmpty ? "" : " · changed by hand on \(entity.editedAt.prefix(10))"
+        let edited = (entity.editedAt.isEmpty ? "" : " · changed by hand on \(entity.editedAt.prefix(10))")
+            + (entity.activityNumber.isEmpty ? "" : " · activity \(entity.activityNumber)")
         guard !entity.source.isEmpty else {
             return entity.balances.isEmpty ? "No trial balance imported" : "Balances entered by hand\(edited.replacingOccurrences(of: " · changed by hand", with: ""))"
         }
@@ -315,10 +320,17 @@ struct EntityView: View {
     private func checks(_ ledger: Ledger) -> some View {
         let unadjusted = ledger.total(.unadjusted, entity: entityID)
         let final = ledger.total(.tax, entity: entityID)
+        // What reclassifying entries that span trial balances moved here from the others (or away).
+        let moved = ledger.total(.rje, entity: entityID)
         let n = ledger.engagement.entries(touching: entityID).count
         return HStack(spacing: 18) {
             CheckBadge(ok: unadjusted.isZero, text: unadjusted.isZero ? "Imported trial balance is in balance" : "Imported trial balance is off by \(unadjusted.formatted)")
-            CheckBadge(ok: final.isZero, text: final.isZero ? "Adjusted columns are in balance" : "Adjusted columns are off by \(final.formatted)")
+            if !moved.isZero && (final - moved).isZero {
+                CheckBadge(ok: true, text: "In balance but for \(moved.formatted) reclassified \(moved.cents > 0 ? "from" : "to") other trial balances")
+                    .help("A reclassifying entry that names more than one trial balance moves an amount between them. Each is then off by its share, and the consolidation still balances.")
+            } else {
+                CheckBadge(ok: final.isZero, text: final.isZero ? "Adjusted columns are in balance" : "Adjusted columns are off by \(final.formatted)")
+            }
             Text("\(n) journal entr\(n == 1 ? "y" : "ies")").foregroundStyle(.secondary)
             Spacer()
             Text("Net income (book)").foregroundStyle(.secondary)

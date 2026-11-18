@@ -157,6 +157,12 @@ public struct Ledger {
         engagement.accounts.map { value(column, entity: entity, account: $0.id) }.sum()
     }
 
+    /// How far one trial balance is out of balance on a basis, leaving aside what reclassifying
+    /// entries moved between it and the others (that is deliberate, and nets out in consolidation).
+    public func imbalance(_ basis: Basis, entity: String) -> Money {
+        total(basis == .book ? .book : .tax, entity: entity) - total(.rje, entity: entity)
+    }
+
     public func eliminationsTotal() -> Money {
         engagement.accounts.map { eliminations(account: $0.id) }.sum()
     }

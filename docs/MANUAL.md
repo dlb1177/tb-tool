@@ -18,15 +18,16 @@ All screenshots show a made-up client, "Summit Storage": four storage properties
 8. [Journal entries](#8-journal-entries)
 9. [Accounts](#9-accounts)
 10. [Groupings](#10-groupings)
-11. [Prior years and rolling forward](#11-prior-years-and-rolling-forward)
-12. [Reports and exports](#12-reports-and-exports)
-13. [Saving, undo, backups and the data check](#13-saving-undo-backups-and-the-data-check)
-14. [The JSON file](#14-the-json-file)
-15. [The command line](#15-the-command-line)
-16. [Menus and shortcuts](#16-menus-and-shortcuts)
-17. [Where things are kept](#17-where-things-are-kept)
-18. [For AI assistants and scripts](#18-for-ai-assistants-and-scripts)
-19. [Troubleshooting](#19-troubleshooting)
+11. [The binder](#11-the-binder)
+12. [Prior years and rolling forward](#12-prior-years-and-rolling-forward)
+13. [Reports and exports](#13-reports-and-exports)
+14. [Saving, undo, backups and the data check](#14-saving-undo-backups-and-the-data-check)
+15. [The JSON file](#15-the-json-file)
+16. [The command line](#16-the-command-line)
+17. [Menus and shortcuts](#17-menus-and-shortcuts)
+18. [Where things are kept](#18-where-things-are-kept)
+19. [For AI assistants and scripts](#19-for-ai-assistants-and-scripts)
+20. [Troubleshooting](#20-troubleshooting)
 
 ---
 
@@ -51,7 +52,7 @@ consolidation simply has one column.
 **The file.** One `.json` file per engagement per year. It identifies itself with
 `"fileType": "trial-balance"`. Everything described in this manual is stored in it except
 standard grouping lists, saved import layouts, saved filters and window positions, which are
-preferences of the app on your Mac ([section 17](#17-where-things-are-kept)).
+preferences of the app on your Mac ([section 18](#18-where-things-are-kept)).
 
 **Trial balances.** A file holds any number of sibling trial balances (the sidebar lists them).
 Each one stores its *unadjusted* balances: what you imported or typed. Nothing else about a
@@ -66,7 +67,7 @@ identified by its number, or by its name when the client's books have no account
 | Type | Prefix | Posts to | Changes |
 |---|---|---|---|
 | Adjusting | AJE | one trial balance | Adjusted, Final (Book), Tax Basis |
-| Reclassifying | RJE | one trial balance | Final (Book), Tax Basis |
+| Reclassifying | RJE | one trial balance, or one on each line | Final (Book), Tax Basis |
 | Tax-only | TJE | one trial balance | Tax Basis only |
 | Eliminating | EJE | a trial balance on each line | the Eliminations column of the consolidation only |
 
@@ -132,7 +133,9 @@ The sidebar holds:
 - **Accounts**, with a count of accounts that have no grouping yet.
 - **Grouping List**.
 - **Reports & Export**.
-- At the bottom, the **data check** ([section 13](#13-saving-undo-backups-and-the-data-check)).
+- **Binder**: the folders and workpapers in the trial balance's folder, with a count of what
+  needs attention ([section 11](#11-the-binder)).
+- At the bottom, the **data check** ([section 14](#14-saving-undo-backups-and-the-data-check)).
 
 The toolbar holds **New Entry**, **Import**, **Quick Export**, **Roll Forward**, and the gear
 for **Trial Balance Settings**.
@@ -168,7 +171,7 @@ workpapers you link to entries are stored as paths relative to it.
 File ▸ **Trial Balance Settings…** (⇧⌘, or the toolbar gear) opens the same form for the open
 file, plus the file's location, its grouping list's name, and the file it was rolled forward
 from. Changing the year does not move any balances; it only changes which stored years count as
-prior. To start the next year, roll forward ([section 11](#11-prior-years-and-rolling-forward)).
+prior. To start the next year, roll forward ([section 12](#12-prior-years-and-rolling-forward)).
 
 ![Trial balance settings](images/file-settings.png)
 
@@ -317,9 +320,20 @@ Select a trial balance in the sidebar. The columns are Account, Name, Grp (group
 Under the grid: whether the imported balances and the adjusted columns are in balance, the
 number of entries, and net income.
 
-Right-click a trial balance in the sidebar for New Adjusting Entry, Rename…, Edit Unadjusted
+Right-click a trial balance in the sidebar for New Adjusting Entry, Details…, Edit Unadjusted
 Balances…, Replace Balances from File…, and Delete…. Deleting removes its balances and the
 entries posted only to it. It is refused while an eliminating entry still refers to it.
+
+### A trial balance's name and activity number
+
+![Trial balance details](images/trial-balance-details.png)
+
+**Details…** (or Balances ▸ Name and Activity Number…) sets the trial balance's name and its
+**activity number**: the number it is imported under in the tax software (the activity in CCH).
+The number is optional. It is shown beside the name in the sidebar, heads that trial balance's
+report, and is the Activity column of the long-format data export, so each row of that export
+says which activity it belongs to. Two trial balances cannot share a number. It carries into
+next year's file on a roll forward.
 
 ### Account activity
 
@@ -411,10 +425,10 @@ or ⌘J (adjusting), ⇧⌘J (reclassifying), ⌥⌘J (tax-only), ⌃⌘J (elimi
 - **Type**: switch between the four kinds at the top right. The number follows the type's own
   sequence (AJE-1, AJE-2…; RJE-1…) unless you type your own.
 - **Number, Date, Description.**
-- **Posts to**: the trial balance. For an eliminating entry there is a trial balance picker on
-  every line instead.
+- **Posts to**: the trial balance, for an adjusting or tax-only entry. A reclassifying or
+  eliminating entry has a trial balance picker on every line instead.
 - **Next year**: what a roll forward does with this entry
-  ([section 11](#11-prior-years-and-rolling-forward)).
+  ([section 12](#12-prior-years-and-rolling-forward)).
 - **Lines**: account, debit or credit, memo. **Add Line** (⌘L) adds a line that starts with
   whatever amount would balance the entry. **New Account…** adds an account to the chart.
 - **Linked Files**: the workpapers that support the entry.
@@ -457,8 +471,19 @@ command line, and reported by the data check for a file edited by hand.
 4. Every line names a trial balance and an account that is in the chart.
 5. Every line has an amount.
 6. Debits equal credits.
-7. An adjusting, reclassifying or tax-only entry posts to a single trial balance. Only an
-   eliminating entry can span trial balances.
+7. An adjusting or tax-only entry posts to a single trial balance. A reclassifying entry and an
+   eliminating entry can name a different trial balance on each line.
+
+**Allocating across trial balances.** A reclassifying entry can debit one account in three
+trial balances and credit it in a fourth, which is how overhead paid by one property is spread
+over the others in a single entry. The entry must balance as a whole. Each trial balance is
+then out of balance on its own by its share; the entry window says by how much, each trial
+balance's screen reports it as "reclassified from (or to) other trial balances" instead of as
+an error, and the consolidation stays in balance.
+
+**Changing an entry's type.** An entry with lines on more than one trial balance cannot be
+switched to adjusting or tax-only; the type goes back and a message says why. Put every line
+on the same trial balance first.
 
 ### Linked files
 
@@ -673,7 +698,91 @@ Changes here are saved as you make them and are not undone with ⌘Z.
 copy. To bring a file up to date, use its Grouping List screen ▸ List ▸ Switch to a Standard
 List, which previews the effect first.
 
-## 11. Prior years and rolling forward
+## 11. The binder
+
+The **binder** is the folder the trial balance file is in: one folder per client per year,
+with the trial balance at its top.
+
+```
+[SS1] Summit Storage, LLC/
+  2026/
+    Summit Storage 2026 Trial Balance.json
+    0000 Binder Notes/
+    2000 Client Financials/
+      2000.01 Ashford Trial Balance.csv
+      2000.02 Brighton Trial Balance.csv
+    3000 Standard Workpapers/
+    4000 Support/
+    5000 Permanent Files/
+      5010 PY Tax Returns/
+      5020 Entity Formation Documents/
+        5020.01 Operating agreement.pdf
+    TB Backups/
+```
+
+Everything in that folder other than the trial balance file itself, `TB Backups` and hidden
+files is part of the binder. A trial balance saved in a general folder (your home folder,
+Desktop, Documents or Downloads) has no binder, so that everything on your Desktop is not
+mistaken for workpapers.
+
+### Index numbers
+
+- A **folder's index** is the number its name starts with: `2000 Client Financials` is 2000.
+- A **file's index** is a number, a point and a suffix: `2000.02 GL.xlsx` is 2000.02. The
+  number is the folder's; the suffix counts the files in it.
+- A file whose name does not start that way is **unindexed**. So is a folder with no number.
+- **No two files share an index, and no two folders share a number.** The tools below never
+  create a duplicate, and one made in Finder is reported.
+
+### The Binder screen
+
+![The binder](images/binder.png)
+
+**Binder** in the sidebar shows the whole binder opened out: every folder and file, indented
+as they are nested, with its index, its name, and any Finder tags. A file with no index says
+*no index*; a loose file beside the trial balance says *not filed*; a placeholder left by a
+roll forward is marked. **Only what needs attention** narrows the list to those.
+
+The folder is read when a file is opened and whenever you come back to TB Tool from another
+app. **Refresh** reads it again. Double-click a file to open it.
+
+**Alerts.** The top of the screen, the badge in the sidebar and the data check all report:
+
+- files sitting **loose** beside the trial balance, which should be filed in a folder;
+- items with **no index**;
+- an index **used more than once**.
+
+### Adding and changing indexes
+
+Select an item and click **Set Index…** (or right-click it).
+
+![Setting an index](images/set-index.png)
+
+- The field starts on the next free number for the folder the file is in (or, for a folder,
+  ten past the highest number beside it). Type any number.
+- **If the number is taken**, choose what happens to the item that has it:
+  - **Insert here**: it moves up by one, and so does each item after it, until there is a
+    free number. Nothing ends up sharing an index.
+  - **Take its place**: it loses its index and becomes unindexed.
+- The list underneath shows every file that will be renamed, before anything is.
+- **Renumbering a folder** renames the files inside that carry its number: making
+  `5020 Entity Formation Documents` 5040 turns `5020.01 …` into `5040.01 …`.
+
+The **Index** menu and the right-click menu also have:
+
+- **Index Every Unindexed File** (or just those in one folder): each takes the next free
+  number of the folder it is in. Files in a folder that has no number are left until the
+  folder has one.
+- **Close the Gaps**: renumbers a folder's files 01, 02, 03… in their present order.
+- **Remove Index**.
+- **File In** / **Move To**: moves a file into a folder and gives it that folder's next index.
+  This is how a loose file is filed.
+
+**Renames are real.** These rename and move the files on disk. Workpapers linked to journal
+entries keep their links through every rename and move. ⌘Z puts the names back. A rename is
+refused, with nothing changed, if a file of the target name is already there.
+
+## 12. Prior years and rolling forward
 
 ### Prior periods
 
@@ -698,8 +807,16 @@ Tax switch.
 
 ![Rolling forward](images/roll-forward.png)
 
-The toolbar's **Roll Forward** (or File ▸ Roll Forward to Next Year…) creates next year's file.
-You choose where it is saved. **The file you are in is not changed.**
+The toolbar's **Roll Forward** (or File ▸ Roll Forward to Next Year…) creates next year's
+trial balance file and, with it, next year's binder. **Nothing in this year's folder is
+changed.**
+
+**Where it goes.** With **Roll the binder forward too** ticked, everything is written into
+next year's folder, which by default sits beside this year's and is named for the new year
+(`…/2026` becomes `…/2027`). **Choose…** picks another folder. The new trial balance file goes
+at the top of that folder. If a trial balance file of that name is already there, roll forward
+stops rather than replace it. Untick the box to roll only the trial balance file; you are then
+asked where to save it.
 
 What the new file holds:
 
@@ -727,7 +844,32 @@ roll forward window itself (which also has **Set All**).
 Linked files are not carried to rolled entries unless you tick **Carry workpaper links**; they
 point at last year's workpapers.
 
-## 12. Reports and exports
+### What happens to the binder
+
+The **Binder** tab of the roll forward window shows the whole binder opened out: every folder,
+every file inside them, and any loose files beside the trial balance. Each has a checkbox, and
+each file has a choice:
+
+| Choice | In next year's binder |
+|---|---|
+| **Roll forward** (the default) | The file is copied, under the same name and index. **Its Finder tags are not copied**, so nothing arrives looking already reviewed. |
+| **Placeholder only** | An empty text file is left in its place, named after the file with "(placeholder)" added: `2000.02 GL.xlsx (placeholder).txt`. It keeps the index. Its only content is the path of this year's file. |
+| **Don't roll forward** (unticked) | Nothing. |
+
+- A **folder** that is ticked is created, with its index number, even if it ends up empty.
+  Unticking a folder leaves out everything inside it. **Everything Inside** sets every file in
+  a folder at once, and **Set Every File** sets the whole binder.
+- **Index numbers roll forward** as they are, on folders, files and placeholders.
+- A **placeholder that was never replaced** stays a placeholder next time, without gaining a
+  second "(placeholder)", and keeps a note of where the real document last was.
+- The trial balance file itself, `TB Backups`, and hidden files are never part of the binder.
+- Nothing already in the destination is overwritten. Items that are already there are left as
+  they are and counted in the message at the end.
+
+When it is done, a message says how many folders were created, how many files rolled forward
+and how many placeholders were left, and offers to open the new year's file.
+
+## 13. Reports and exports
 
 ![Reports and exports](images/reports.png)
 
@@ -779,7 +921,7 @@ the report's title and heading and a `rows` array of records keyed by column tit
 subtotal rows. Amounts in every export are
 plain signed numbers: debits positive, credits negative.
 
-## 13. Saving, undo, backups and the data check
+## 14. Saving, undo, backups and the data check
 
 **Saving.** There is no Save command. Every change is written to the JSON file as you make it.
 
@@ -807,9 +949,11 @@ counts the problems; click it to read them. It reports:
 - accounts that have no grouping, with a **Show Ungrouped Accounts** button (counted as one
   issue however many there are);
 - a subgroup whose grouping is missing;
-- linked files that cannot be found, with a **Fix Links…** button.
+- linked files that cannot be found, with a **Fix Links…** button;
+- in the binder: files sitting loose beside the trial balance, items with no index, and index
+  numbers used more than once, with an **Open Binder** button.
 
-## 14. The JSON file
+## 15. The JSON file
 
 The file is ordinary JSON with a fixed key order and one record per line, so it reads well and
 compares cleanly in version control.
@@ -875,6 +1019,7 @@ entities, entries, accounts or groupings are not.
 | `name` | The name shown. |
 | `source`, `importedAt` | The file the balances came from, and when. |
 | `editedAt` | Optional. When the balances were last changed by hand. |
+| `activityNumber` | Optional. The activity number this trial balance is imported under in the tax software. |
 | `balances` | Unadjusted balances: `account`, `debit`, `credit`. One of the two amounts is zero. |
 | `priorPeriods` | Optional. Per year: `year`, `source`, `importedAt`, and `balances` with `account`, `book`, `tax`, `elim`, written signed (debit positive). `elim` is this trial balance's share of that year's eliminations. |
 
@@ -925,7 +1070,7 @@ each time, so they cannot drift from the entries.
 - **A chart of accounts**: `{ "fileType": "chart-of-accounts", "schemaVersion": 2, "name": …,
   "exportedAt": …, "accounts": [ { "number", "name", "type", "grouping" } ], "groupings": […] }`.
 
-## 15. The command line
+## 16. The command line
 
 `tbcli` works on the same files through the same engine and the same rules as the app. It is
 inside the app bundle at `TB Tool.app/Contents/MacOS/tbcli`, and is built by `swift build` as
@@ -941,7 +1086,7 @@ tbcli groupings-export <file.json> <out.json|out.csv>
 tbcli groupings-import <file.json> <list.json|csv|xlsx|other TB.json> [--merge]
 tbcli post <file.json> <entry.json>
 tbcli links <file.json>
-tbcli rollforward <file.json> <next-year.json> [--carry-balance-sheet <equity account>]
+tbcli rollforward <file.json> <next-year.json> [--carry-balance-sheet <equity account>] [--binder]
 tbcli check <file.json>
 tbcli summary <file.json>
 tbcli export <file.json> <out.xlsx | out.csv>
@@ -956,9 +1101,9 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | `groupings-export` / `groupings-import` | The grouping list. Import replaces the list unless `--merge`. |
 | `post` | Posts one journal entry from a JSON file. It is refused, with every reason, if it breaks a posting rule. |
 | `links` | Lists linked files that cannot be found. Exits with status 2 if there are any. |
-| `rollforward` | Writes next year's file. The source is unchanged. |
-| `check` | Lists every data-check problem, or says the file is clean. Also says how many accounts aren't grouped, and which. |
-| `summary` | Balance check and net income per trial balance and consolidated. |
+| `rollforward` | Writes next year's file. The source is unchanged. With `--binder`, the folders and files beside the source are rolled into the new file's folder too: every file copied without its Finder tags, placeholders kept as placeholders, nothing overwritten. |
+| `check` | Lists every data-check problem, or says the file is clean. Also says how many accounts aren't grouped, and what in the binder is loose, unindexed or numbered twice. |
+| `summary` | Balance check and net income per trial balance (with its activity number, and anything reclassified to or from other trial balances) and consolidated. |
 | `export` | `.xlsx` writes the full workbook; `.csv` writes the long-format data. |
 
 **An entry file for `post`:**
@@ -980,7 +1125,7 @@ tbcli export <file.json> <out.xlsx | out.csv>
 `number` may be left out (the next number for the type is used), as may `date` (the year end is
 used) and `rollForward`. A line's `entity` may be the trial balance's id or its name.
 
-## 16. Menus and shortcuts
+## 17. Menus and shortcuts
 
 **TB Tool**
 
@@ -1030,7 +1175,7 @@ close the list.
 offers Paste, New Blank Trial Balance, Import Chart of Accounts, Import Grouping List), Quick
 Export, Roll Forward, Trial Balance Settings.
 
-## 17. Where things are kept
+## 18. Where things are kept
 
 | What | Where |
 |---|---|
@@ -1042,7 +1187,7 @@ Export, Roll Forward, Trial Balance Settings.
 
 Nothing is sent anywhere.
 
-## 18. For AI assistants and scripts
+## 19. For AI assistants and scripts
 
 A trial balance file can be read and changed without the app. If you are an assistant working
 on one, these are the things to get right.
@@ -1082,14 +1227,14 @@ on one, these are the things to get right.
 
 1. An entry balances, has at least two lines, a unique number and a real date.
 2. Every line names an existing trial balance and an existing account, with a non-zero amount.
-3. Only an `eliminating` entry may name more than one trial balance.
+3. Only a `reclassifying` or an `eliminating` entry may name more than one trial balance.
 4. Account ids, trial balance ids, grouping ids and grouping codes are each unique.
 5. A subgroup's `parent` is a grouping that is not itself a subgroup.
 6. An account's type is its grouping's `type` (for a subgroup, its parent's) whenever the
    grouping has one. Don't set `type` on a grouped account: set its `grouping`. The app and
    `tbcli` rewrite a grouped account's `type` to match whenever they open the file.
 
-## 19. Troubleshooting
+## 20. Troubleshooting
 
 **macOS won't open the app.** A downloaded copy is not notarized. System Settings ▸ Privacy &
 Security ▸ Open Anyway. See [section 3](#3-installing-and-opening).
@@ -1113,6 +1258,17 @@ the revenue and expense accounts.
 or the Accounts screen's Chart menu.
 
 **A linked file shows as missing.** Fix Links… on the Journal Entries screen.
+
+**The data check mentions the binder.** Open Binder from the data check. File loose files with
+right-click ▸ File In, index what has no index with Index ▸ Index Every Unindexed File, and
+change one of any two items that share a number. See [section 11](#11-the-binder).
+
+**Roll forward says the trial balance file is already there.** Next year's folder already has
+a file of that name. Roll forward never replaces a file. Choose another folder, or move the
+existing file.
+
+**A trial balance shows "reclassified from other trial balances".** A reclassifying entry
+names more than one trial balance. That is allowed; the consolidation still balances.
 
 **The data check says a code is used by several groupings.** The file predates unique codes.
 Grouping List ▸ Combine as Subgroups.

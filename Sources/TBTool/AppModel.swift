@@ -10,6 +10,7 @@ enum SidebarItem: Hashable {
     case accounts
     case groupings
     case reports
+    case binder
 }
 
 struct AlertInfo: Identifiable {
@@ -71,6 +72,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var fileURL: URL?
     @Published private(set) var issues: [String] = []
     @Published private(set) var brokenLinks: [BrokenLink] = []
+    /// The folder the trial balance sits in, read as a binder: its folders and indexed workpapers.
+    /// Nil when no file is open or the folder is a general one (Desktop, Documents…), not a binder.
+    @Published private(set) var binder: BinderTree?
     @Published private(set) var candidates: [URL] = []
     @Published var selection: SidebarItem? = .consolidated
     @Published var status: String = ""
@@ -116,6 +120,9 @@ final class AppModel: ObservableObject {
             let real = folder.standardizedFileURL.path
             let path = url.standardizedFileURL.path
             if path.hasPrefix(real) { return args[i + 1] + path.dropFirst(real.count) }
+            // A folder beside it (next year's binder) is shown beside the stand-in too.
+            let parent = (real as NSString).deletingLastPathComponent
+            if path.hasPrefix(parent + "/") { return (args[i + 1] as NSString).deletingLastPathComponent + path.dropFirst(parent.count) }
         }
         return url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
@@ -162,6 +169,7 @@ final class AppModel: ObservableObject {
             sessionBackedUp = false
             undoManager?.removeAllActions()
             set(e)
+            refreshBinder()
             selection = .consolidated
             status = "Opened \(url.lastPathComponent)"
                 + (retyped > 0 ? " — \(retyped) account\(retyped == 1 ? "" : "s") took the account type of \(retyped == 1 ? "its" : "their") grouping" : "")
@@ -214,6 +222,7 @@ final class AppModel: ObservableObject {
         fileURL = nil
         issues = []
         brokenLinks = []
+        binder = nil
         undoManager?.removeAllActions()
         UserDefaults.standard.removeObject(forKey: "lastFile")
         refreshCandidates()
@@ -283,6 +292,7 @@ final class AppModel: ObservableObject {
     /// linked files that were moved or renamed while the app was in the background.
     func checkExternalChange() {
         refreshLinks()
+        refreshBinder()
         guard let url = fileURL, let onDisk = modificationDate(url), let diskDate,
               onDisk != diskDate, onDisk != unreadableDiskDate else { return }
         do {
@@ -337,14 +347,15 @@ final class AppModel: ObservableObject {
 
     func showRollForward() {
         guard engagement != nil else { return }
-        Windows.shared.show("rollforward", title: "Roll Forward to Next Year", size: NSSize(width: 920, height: 640), minSize: NSSize(width: 760, height: 480)) {
+        Windows.shared.show("rollforward", title: "Roll Forward to Next Year", size: NSSize(width: 980, height: 780), minSize: NSSize(width: 760, height: 520), frameName: "rollforward-2") {
             RollForwardView()
         }
     }
 
     /// Writes next year's file where the user chooses (this file's folder by default). This file is not changed.
     @discardableResult
-    func rollForward(_ options: RollForwardOptions, to destination: URL? = nil) -> Bool {
+    /// With `binderChoices`, the binder's folders and files are rolled into the destination's folder as well.
+    func rollForward(_ options: RollForwardOptions, to destination: URL? = nil, binderChoices: [String: BinderRollChoice]? = nil) -> Bool {
         guard let e = engagement, let url = fileURL else { return false }
         do {
             var o = options
@@ -352,6 +363,9 @@ final class AppModel: ObservableObject {
             let summary = try e.rollForwardSummary()
             let next = try e.rolledForward(o)
             var dest = destination
+            if let dest, FileManager.default.fileExists(atPath: dest.path) {
+                throw TBError("\(dest.lastPathComponent) is already in \(dest.deletingLastPathComponent().lastPathComponent). Choose another folder, or move that file first.")
+            }
             if dest == nil {
                 let panel = NSSavePanel()
                 panel.allowedContentTypes = [.json]
@@ -365,13 +379,24 @@ final class AppModel: ObservableObject {
             guard let dest, dest.standardizedFileURL != url.standardizedFileURL else {
                 throw TBError("Choose a different name: that is the \(summary.fromYear) file being rolled forward.")
             }
+            try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // The binder first: if a folder can't be made, nothing has been written yet.
+            var rolled: BinderRollResult?
+            if let binderChoices, let binder {
+                rolled = try BinderRoller.roll(binder, to: dest.deletingLastPathComponent(), choices: binderChoices)
+            }
             try Store.save(next, to: dest)
             status = "Rolled forward to \(dest.lastPathComponent)"
             Windows.shared.close("rollforward")
             if quiet { return true }
             let ask = NSAlert()
-            ask.messageText = "The \(summary.toYear) file is ready"
-            ask.informativeText = "\(dest.lastPathComponent)\n\n\(summary.fromYear) balances are in it as PP1. Journal entries: \(summary.entryCounts)."
+            ask.messageText = rolled == nil ? "The \(summary.toYear) file is ready" : "The \(summary.toYear) binder is ready"
+            var text = "\(dest.lastPathComponent)\n\n\(summary.fromYear) balances are in it as PP1. Journal entries: \(summary.entryCounts)."
+            if let r = rolled {
+                text += "\n\nBinder: \(r.folders) folder\(r.folders == 1 ? "" : "s") created, \(r.copied) file\(r.copied == 1 ? "" : "s") rolled forward without tags, \(r.placeholders) placeholder\(r.placeholders == 1 ? "" : "s") left."
+                if !r.alreadyThere.isEmpty { text += " \(r.alreadyThere.count) item\(r.alreadyThere.count == 1 ? " was" : "s were") already there and left alone." }
+            }
+            ask.informativeText = text
             ask.addButton(withTitle: "Open the \(summary.toYear) File")
             ask.addButton(withTitle: "Stay in \(summary.fromYear)")
             if ask.runModal() == .alertFirstButtonReturn { open(dest) }
@@ -719,6 +744,70 @@ final class AppModel: ObservableObject {
 
     func reveal(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    // MARK: The binder folder
+
+    /// Reads the folder the trial balance is in. Called when a file opens, when the app comes
+    /// back to the front, and after anything here changes the folder.
+    func refreshBinder() {
+        guard let folder, BinderScanner.isLikelyBinder(folder) else {
+            if binder != nil { binder = nil }
+            return
+        }
+        let tree = BinderScanner.scan(folder)
+        if tree != binder { binder = tree }
+    }
+
+    /// How many things in the binder need attention: loose files, items with no index, shared indexes.
+    var binderAlerts: [String] {
+        guard let b = binder, !b.truncated else { return [] }
+        var out: [String] = []
+        let unfiled = b.unfiled.count, unindexed = b.unindexed.count, shared = b.duplicateIndexes.count
+        if unfiled > 0 { out.append("\(unfiled) file\(unfiled == 1 ? " sits" : "s sit") loose beside the trial balance. File \(unfiled == 1 ? "it" : "them") in one of the binder's folders.") }
+        if unindexed > 0 { out.append("\(unindexed) binder item\(unindexed == 1 ? " has" : "s have") no index.") }
+        if shared > 0 { out.append("\(shared) index number\(shared == 1 ? " is" : "s are") used more than once (\(b.duplicateIndexes.prefix(3).map(\.index).joined(separator: ", "))).") }
+        return out
+    }
+
+    /// Renames or moves binder items on disk and keeps journal entries' linked files pointing at
+    /// them. One step, and ⌘Z puts the names back.
+    @discardableResult
+    func applyBinderRenames(_ renames: [BinderRename], actionName: String) -> Bool {
+        guard let folder, !renames.isEmpty else { return false }
+        do {
+            try BinderFileOps.apply(renames, root: folder)
+        } catch {
+            alert = AlertInfo(title: "\(actionName) didn't go through", message: error.localizedDescription)
+            refreshBinder()
+            return false
+        }
+        let reversed = renames.map { BinderRename(from: $0.to, to: $0.from, isFolder: $0.isFolder) }
+        undoManager?.registerUndo(withTarget: self) { model in
+            model.applyBinderRenames(reversed, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+        mutate(actionName) { $0.relink(after: renames) }
+        refreshBinder()
+        refreshLinks()
+        status = "\(actionName): \(renames.count) item\(renames.count == 1 ? "" : "s") renamed"
+        return true
+    }
+
+    func showSetIndex(for path: String) {
+        guard binder?.item(path) != nil else { return }
+        Windows.shared.close("binder-index")
+        Windows.shared.show("binder-index", title: "Set Index", size: NSSize(width: 560, height: 420), minSize: NSSize(width: 500, height: 340)) {
+            SetIndexView(path: path)
+        }
+    }
+
+    func showEntityDetails(_ id: String) {
+        guard engagement?.entity(id) != nil else { return }
+        Windows.shared.close("entity-details")
+        Windows.shared.show("entity-details", title: "Trial Balance Details", size: NSSize(width: 460, height: 250), minSize: NSSize(width: 420, height: 230)) {
+            EntityDetailsView(entityID: id)
+        }
     }
 
     func refreshLinks() {

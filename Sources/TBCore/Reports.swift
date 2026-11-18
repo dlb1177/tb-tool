@@ -124,7 +124,8 @@ public struct Reports {
         let ent = entityByID[entityID]
         let columns = EntityColumn.allCases
         let years = years(prior)
-        var t = table("\(ent?.name ?? entityID) — Trial Balance", sheet: ent?.name ?? entityID,
+        let activity = (ent?.activityNumber.isEmpty ?? true) ? "" : " (Activity \(ent!.activityNumber))"
+        var t = table("\(ent?.name ?? entityID)\(activity) — Trial Balance", sheet: ent?.name ?? entityID,
                       columns: [.text("Account", 76), .text("Name", 260), .text("Grp", 60)]
                           + columns.map { .money($0.title) } + priorColumns(years, basis: priorBasis, markTax: true))
         let active = ledger.activeAccounts(in: entityID)
@@ -369,7 +370,7 @@ public struct Reports {
     /// export meant for pivoting, charting, or handing to another tool.
     public func tidy(hideZero: Bool = false) -> ReportTable {
         var t = ReportTable(title: "Trial Balance Data", subtitle: asOf, sheetName: "Data", flat: true,
-                            columns: [.text("Trial Balance", 130), .text("Account", 76), .text("Account Name", 240), .text("Type", 80),
+                            columns: [.text("Trial Balance", 130), .text("Activity", 70), .text("Account", 76), .text("Account Name", 240), .text("Type", 80),
                                       .text("Grouping Code", 90), .text("Grouping", 200), .text("Subgroup", 160), .text("Grouping Section", 130)]
                                 + EntityColumn.allCases.map { .money($0.title) }
                                 + [.money("Eliminations"), .money("Consolidated (Book)"), .money("Consolidated (Tax)")]
@@ -388,7 +389,7 @@ public struct Reports {
                                                    ledger.prior(.tax, year: $0, entity: ent.id, account: a.id)] }
                 if hideZero && amounts.allSatisfy(\.isZero) { continue }
                 t.rows.append(ReportRow(id: "\(ent.id):\(a.id)", cells: [
-                    .text(ent.name), .text(a.number), .text(a.name), .text(a.type.label),
+                    .text(ent.name), .text(ent.activityNumber), .text(a.number), .text(a.name), .text(a.type.label),
                     .text(g.code), .text(g.name), .text(g.subgroup), .text(g.section),
                 ] + amounts.map { .money($0) }, accountID: a.id, entityID: ent.id, accountType: a.type))
             }

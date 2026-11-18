@@ -90,6 +90,7 @@ public enum Store {
             JSONField("importedAt", .string(ent.importedAt)),
         ]
         if !ent.editedAt.isEmpty { fields.append(JSONField("editedAt", .string(ent.editedAt))) }
+        if !ent.activityNumber.isEmpty { fields.append(JSONField("activityNumber", .string(ent.activityNumber))) }
         fields.append(JSONField("balances", .array(ent.balances.map { b in
             .object([
                 JSONField("account", .string(b.account)),
@@ -242,6 +243,7 @@ public enum Store {
             ent.source = o.optString("source")
             ent.importedAt = o.optString("importedAt")
             ent.editedAt = o.optString("editedAt")
+            ent.activityNumber = o.optString("activityNumber")
             for (j, p) in o.array("priorPeriods").enumerated() {
                 let po = try JSONObject(p, "entities[\(i)].priorPeriods[\(j)]")
                 guard let year = po.int("year") else { throw TBError("entities[\(i)].priorPeriods[\(j)]: missing “year”.") }

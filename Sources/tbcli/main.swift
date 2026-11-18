@@ -23,8 +23,12 @@ tbcli — work with a TB Tool trial balance file
                                                            replace the grouping list (or add to it)
   tbcli post <file.json> <entry.json>                      post one journal entry (see README)
   tbcli links <file.json>                                  list linked files that can't be found
-  tbcli rollforward <file.json> <next-year.json> [--carry-balance-sheet <equity account>]
-                                                           write next year's file; this one is unchanged
+  tbcli rollforward <file.json> <next-year.json> [--carry-balance-sheet <equity account>] [--binder]
+                                                           write next year's file; this one is unchanged.
+                                                           With --binder the folders and files beside this file
+                                                           are rolled into the new file's folder as well: files
+                                                           are copied without Finder tags, placeholders stay
+                                                           placeholders, nothing there is overwritten
   tbcli check <file.json>                                  list integrity problems
   tbcli summary <file.json>                                balances check and net income
   tbcli export <file.json> <out.xlsx | out.csv>            full workbook, or the long-format data
@@ -51,7 +55,7 @@ func positional(_ args: [String]) -> [String] {
         }
         if a.hasPrefix("--") {
             // Switches stand alone; every other option is followed by its value.
-            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names"].contains(a)
+            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names", "--binder"].contains(a)
             continue
         }
         out.append(a)
@@ -211,7 +215,15 @@ do {
             o.opening = .carryBalanceSheet(closeInto: account.id)
         }
         let summary = try e.rollForwardSummary()
-        try Store.save(try e.rolledForward(o), to: dest)
+        let next = try e.rolledForward(o)
+        if rest.contains("--binder") {
+            let tree = BinderScanner.scan(url.deletingLastPathComponent())
+            let r = try BinderRoller.roll(tree, to: dest.deletingLastPathComponent(), choices: BinderRoller.defaultChoices(tree))
+            print("Binder: \(r.folders) folders created, \(r.copied) files rolled forward, \(r.placeholders) placeholders" + (r.alreadyThere.isEmpty ? "" : ", \(r.alreadyThere.count) already there and left alone"))
+        } else {
+            try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        try Store.save(next, to: dest)
         print("Rolled \(summary.fromYear) forward to \(dest.lastPathComponent) (year ended \(summary.newPeriodEnd))")
         print("  \(summary.fromYear) balances are PP1; entries: \(summary.entryCounts)")
 
@@ -234,8 +246,17 @@ do {
 
     case "check":
         guard pos.count == 1 else { fail(usage) }
-        let checked = try Store.load(URL(fileURLWithPath: pos[0]))
+        let checkedURL = URL(fileURLWithPath: pos[0])
+        let checked = try Store.load(checkedURL)
         let issues = checked.issues()
+        // The binder the file sits in: loose files, items with no index, numbers used twice.
+        var binderNotes: [String] = []
+        if BinderScanner.isLikelyBinder(checkedURL.deletingLastPathComponent().standardizedFileURL) {
+            let tree = BinderScanner.scan(checkedURL.deletingLastPathComponent())
+            if !tree.unfiled.isEmpty { binderNotes.append("Binder: \(tree.unfiled.count) loose file(s) beside the trial balance: \(tree.unfiled.prefix(5).map(\.name).joined(separator: ", "))") }
+            if !tree.unindexed.isEmpty { binderNotes.append("Binder: \(tree.unindexed.count) item(s) with no index: \(tree.unindexed.prefix(5).map(\.path).joined(separator: ", "))") }
+            for d in tree.duplicateIndexes { binderNotes.append("Binder: index \(d.index) is used by \(d.items.count) items") }
+        }
         // Not a fault in the file, but work left to do: say so either way.
         let ungrouped = checked.ungroupedAccounts
         let note = ungrouped.isEmpty ? nil
@@ -243,9 +264,11 @@ do {
         if issues.isEmpty {
             print("Clean: no problems found.")
             if let note { print(note) }
+            binderNotes.forEach { print($0) }
         } else {
             issues.forEach { print($0) }
             if let note { print(note) }
+            binderNotes.forEach { print($0) }
             exit(2)
         }
 
@@ -255,7 +278,9 @@ do {
         let ledger = Ledger(e)
         print("\(e.name) — as of \(e.periodEnd)" + (e.priorYears.isEmpty ? "" : " — prior years: \(e.priorYears.map { e.priorLabel($0) }.joined(separator: ", "))"))
         for ent in e.entities {
-            print("  \(ent.name): out of balance \(ledger.total(.book, entity: ent.id).formatted), net income \(ledger.netIncome(.book, entity: ent.id).formatted)")
+            let moved = ledger.total(.rje, entity: ent.id)
+            print("  \(ent.name)\(ent.activityNumber.isEmpty ? "" : " (activity \(ent.activityNumber))"): out of balance \(ledger.imbalance(.book, entity: ent.id).formatted), net income \(ledger.netIncome(.book, entity: ent.id).formatted)"
+                  + (moved.isZero ? "" : ", \(moved.formatted) reclassified \(moved.cents > 0 ? "from" : "to") other trial balances"))
         }
         print("  Journal entries: \(e.journalEntries.count)")
         print("  Eliminations net to \(ledger.eliminationsTotal().formatted)")

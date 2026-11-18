@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TBCore
 
@@ -232,13 +233,23 @@ struct RollForwardView: View {
     @State private var closeInto: String?
     @State private var keepLinks = false
     @State private var keepYears = 5
+    /// Roll the binder's folders and files into next year's folder along with the trial balance.
+    @State private var rollBinder = true
+    @State private var choices: [String: BinderRollChoice] = [:]
+    @State private var destination: URL?
+    @State private var tab = "binder"
+    @State private var loaded = false
 
     var body: some View {
         if let e = model.engagement, let summary = try? e.rollForwardSummary() {
+            let tree = model.binder.flatMap { $0.isEmpty || $0.truncated ? nil : $0 }
+            let withBinder = rollBinder && tree != nil
+            let target = destination ?? model.folder.map { BinderRoller.defaultDestination(for: $0, fromYear: summary.fromYear, toYear: summary.toYear) }
+            let fileName = Engagement.rolledFileName(model.fileURL?.lastPathComponent ?? "Trial Balance.json", from: summary.fromYear, to: summary.toYear)
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Roll forward \(String(summary.fromYear)) → \(String(summary.toYear))").font(.title3.bold())
-                    Text("Creates a new file for the year ended \(Timestamp.longDay(summary.newPeriodEnd) ?? summary.newPeriodEnd). You choose where it goes next. \(model.fileURL?.lastPathComponent ?? "This file") is left exactly as it is.")
+                    Text("Creates \(tree == nil ? "a new file" : "next year's binder") for the year ended \(Timestamp.longDay(summary.newPeriodEnd) ?? summary.newPeriodEnd). \(model.fileURL?.lastPathComponent ?? "This file")\(tree == nil ? " is" : " and everything in this year's folder are") left exactly as \(tree == nil ? "it is" : "they are").")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -246,7 +257,7 @@ struct RollForwardView: View {
                 .padding(16)
                 Divider()
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("\(String(summary.fromYear)) final balances — book, tax, and eliminations — become PP1 in the new file\(e.priorYears.isEmpty ? "." : "; \(e.priorYears.map { e.priorLabel($0) }.joined(separator: ", ")) each move back one.")", systemImage: "clock.arrow.circlepath")
+                    Label("\(String(summary.fromYear)) final balances — book, tax, and eliminations — become PP1 in the new file\(e.priorYears.isEmpty ? "." : "; \(e.priorYears.map { e.priorLabel($0) }.joined(separator: ", ")) \(e.priorYears.count == 1 ? "moves" : "each move") back one.")", systemImage: "clock.arrow.circlepath")
                     Label("The chart of accounts, groupings, grouping list and binder details carry over.", systemImage: "list.bullet.rectangle")
                     HStack(spacing: 8) {
                         Image(systemName: "tablecells").frame(width: 18)
@@ -278,70 +289,139 @@ struct RollForwardView: View {
                             .help("Off: rolled entries start with no linked files, since the links point at \(String(summary.fromYear)) workpapers")
                     }
                     .padding(.leading, 26)
+                    if tree != nil {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder").frame(width: 18)
+                            Toggle("Roll the binder forward too, into", isOn: $rollBinder).fixedSize()
+                            Text(target.map { model.displayPath($0) } ?? "")
+                                .foregroundStyle(rollBinder ? Color.primary : Color.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                                .help(target?.path ?? "")
+                            Button("Choose…") { chooseDestination(summary) }
+                                .disabled(!rollBinder)
+                            Spacer(minLength: 0)
+                        }
+                        if rollBinder, let target, FileManager.default.fileExists(atPath: target.appendingPathComponent(fileName).path) {
+                            Label("\(fileName) is already in that folder, and roll forward won't replace it. Choose another folder, or move that file first.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
+                                .padding(.leading, 26)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if rollBinder, let target, FileManager.default.fileExists(atPath: target.path) {
+                            Text("That folder is already there. Nothing in it will be overwritten: items it already has are left as they are.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 26)
+                        }
+                    }
                 }
                 .font(.system(size: 12.5))
                 .padding(16)
                 Divider()
-                HStack {
-                    Text("Journal entries").font(.headline)
-                    Text(summary.entryCounts)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Menu("Set All") {
-                        ForEach(RollForward.allCases, id: \.self) { value in
-                            Button(value.label) { model.setRollForward(value, for: Set(e.journalEntries.map(\.id))) }
-                        }
+                HStack(spacing: 12) {
+                    Picker("", selection: $tab) {
+                        if tree != nil { Text("Binder").tag("binder") }
+                        Text("Journal Entries (\(e.journalEntries.count))").tag("entries")
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                     .fixedSize()
+                    if tab == "entries" || tree == nil {
+                        Text(summary.entryCounts).foregroundStyle(.secondary)
+                        Spacer()
+                        Menu("Set All") {
+                            ForEach(RollForward.allCases, id: \.self) { value in
+                                Button(value.label) { model.setRollForward(value, for: Set(e.journalEntries.map(\.id))) }
+                            }
+                        }
+                        .fixedSize()
+                    } else if let tree {
+                        Text(binderCounts(tree)).foregroundStyle(.secondary)
+                        Spacer()
+                        Menu("Set Every File") {
+                            Button("Roll Forward") { setAll(tree, .copy) }
+                            Button("Placeholder Only") { setAll(tree, .placeholder) }
+                            Button("Don't Roll Forward") { setAll(tree, .skip) }
+                        }
+                        .fixedSize()
+                        .disabled(!rollBinder)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                Table(Reports(e).sortedEntries()) {
-                    TableColumn("Entry") { je in Text(je.number).fontWeight(.medium) }
-                        .width(min: 60, ideal: 70, max: 100)
-                    TableColumn("Type") { je in Text(je.type.label) }
-                        .width(min: 80, ideal: 100, max: 120)
-                    TableColumn("Description") { je in Text(je.description) }
-                        .width(min: 140, ideal: 240)
-                    TableColumn("Amount") { je in
-                        Text(je.pending ? "—" : je.totalDebits.grouped).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    .width(min: 90, ideal: 110, max: 150)
-                    TableColumn("Next year") { je in
-                        Picker("", selection: Binding(get: { je.rollForward }, set: { model.setRollForward($0, for: [je.id]) })) {
-                            ForEach(RollForward.allCases, id: \.self) { Text($0.label).tag($0) }
+                if tab == "entries" || tree == nil {
+                    Table(Reports(e).sortedEntries()) {
+                        TableColumn("Entry") { je in Text(je.number).fontWeight(.medium) }
+                            .width(min: 60, ideal: 70, max: 100)
+                        TableColumn("Type") { je in Text(je.type.label) }
+                            .width(min: 80, ideal: 100, max: 120)
+                        TableColumn("Description") { je in Text(je.description) }
+                            .width(min: 140, ideal: 240)
+                        TableColumn("Amount") { je in
+                            Text(je.pending ? "—" : je.totalDebits.grouped).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
                         }
-                        .labelsHidden()
-                        .frame(width: 228)
+                        .width(min: 90, ideal: 110, max: 150)
+                        TableColumn("Next year") { je in
+                            Picker("", selection: Binding(get: { je.rollForward }, set: { model.setRollForward($0, for: [je.id]) })) {
+                                ForEach(RollForward.allCases, id: \.self) { Text($0.label).tag($0) }
+                            }
+                            .labelsHidden()
+                            .frame(width: 228)
+                        }
+                        .width(min: 240, ideal: 244, max: 260)
                     }
-                    .width(min: 240, ideal: 244, max: 260)
+                } else if let tree {
+                    binderList(tree)
+                        .disabled(!rollBinder)
+                        .opacity(rollBinder ? 1 : 0.5)
                 }
                 Divider()
                 HStack {
-                    Text("Without amounts: the entry waits in the new file marked “needs amounts” and posts nothing until you fill it in. As reversal: debits and credits are swapped, dated \(Timestamp.day(e.periodEnd, addingDays: 1) ?? "the first day of the new year"), and each line's memo starts “[Reversal from \(String(summary.fromYear))]”.")
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(tab == "binder" && tree != nil
+                         ? "Roll forward copies a file into next year's binder with its index and without its Finder tags. Placeholder leaves an empty text file under the same name, noting where this year's file is."
+                         : "Without amounts: the entry waits in the new file marked “needs amounts” and posts nothing until you fill it in. As reversal: debits and credits are swapped, dated \(Timestamp.day(e.periodEnd, addingDays: 1) ?? "the first day of the new year"), and each line's memo starts “[Reversal from \(String(summary.fromYear))]”.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Cancel") { closeWindow() }
                         .keyboardShortcut(.cancelAction)
-                    Button("Roll Forward…") {
+                    Button(withBinder ? "Roll Forward" : "Roll Forward…") {
                         var o = RollForwardOptions()
                         if carry, let closeInto { o.opening = .carryBalanceSheet(closeInto: closeInto) }
                         o.keepLinks = keepLinks
                         o.keepPriorYears = keepYears
-                        model.rollForward(o)
+                        if withBinder, let target {
+                            model.rollForward(o, to: target.appendingPathComponent(fileName), binderChoices: choices)
+                        } else {
+                            model.rollForward(o)
+                        }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(carry && closeInto == nil)
+                    .disabled((carry && closeInto == nil)
+                              || (withBinder && (target.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent(fileName).path) } ?? false)))
                 }
                 .padding(14)
             }
-            .frame(minWidth: 720, minHeight: 480)
+            .frame(minWidth: 760, minHeight: 520)
             .onAppear {
                 if closeInto == nil {
                     let equity = e.sortedAccounts.filter { $0.type == .equity }
                     closeInto = (equity.first { $0.name.lowercased().contains("retained") } ?? equity.first)?.id
+                }
+                guard !loaded else { return }
+                loaded = true
+                model.refreshBinder()
+                if let tree = model.binder, !tree.isEmpty, !tree.truncated {
+                    choices = BinderRoller.defaultChoices(tree)
+                    // For documentation pictures: show one of each choice.
+                    if CommandLine.arguments.contains("--tb-snapshot") {
+                        for f in tree.files where f.parentPath.contains("Support") { choices[f.path] = .placeholder }
+                        if let loose = tree.unfiled.first { choices[loose.path] = .skip }
+                    }
+                } else {
+                    tab = "entries"
                 }
             }
         } else {
@@ -352,7 +432,107 @@ struct RollForwardView: View {
                     model.showSettings()
                 }
             }
-            .frame(minWidth: 720, minHeight: 480)
+            .frame(minWidth: 760, minHeight: 520)
+        }
+    }
+
+    // MARK: The binder, opened out
+
+    private func binderCounts(_ tree: BinderTree) -> String {
+        var copy = 0, placeholder = 0, skip = 0
+        for f in tree.files {
+            switch BinderRoller.effective(f.path, choices) {
+            case .copy: copy += 1
+            case .placeholder: placeholder += 1
+            case .skip: skip += 1
+            }
+        }
+        let folders = tree.folders.filter { BinderRoller.effective($0.path, choices) != .skip }.count
+        return "\(folders) folder\(folders == 1 ? "" : "s") · \(copy) file\(copy == 1 ? "" : "s") roll forward · \(placeholder) placeholder\(placeholder == 1 ? "" : "s") · \(skip) left behind"
+    }
+
+    private func setAll(_ tree: BinderTree, _ choice: BinderRollChoice) {
+        for f in tree.files { choices[f.path] = choice }
+    }
+
+    /// Sets a folder and everything under it.
+    private func set(_ folder: BinderItem, contents choice: BinderRollChoice) {
+        choices[folder.path] = .copy
+        func walk(_ item: BinderItem) {
+            for child in item.children {
+                choices[child.path] = child.isFolder ? .copy : choice
+                walk(child)
+            }
+        }
+        walk(folder)
+    }
+
+    private func binderList(_ tree: BinderTree) -> some View {
+        List(tree.all) { item in
+            let own = choices[item.path] ?? .copy
+            let effective = BinderRoller.effective(item.path, choices)
+            // An item inside a folder that isn't being brought has nothing to decide.
+            let blocked = effective == .skip && own != .skip
+            HStack(spacing: 8) {
+                Toggle("", isOn: Binding(get: { own != .skip }, set: { on in
+                    choices[item.path] = on ? (item.isPlaceholder ? .placeholder : .copy) : .skip
+                }))
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+                .disabled(blocked)
+                .padding(.leading, CGFloat(item.depth) * 18)
+                Image(systemName: item.isFolder ? "folder.fill" : (item.isPlaceholder ? "doc.badge.ellipsis" : "doc"))
+                    .foregroundStyle(item.isFolder ? Color.accentColor : Color.secondary)
+                    .frame(width: 18)
+                Text(item.name)
+                    .fontWeight(item.isFolder ? .semibold : .regular)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !item.tags.isEmpty {
+                    Text(item.tags.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .help("Finder tags on this year's file. They are not carried to next year.")
+                }
+                Spacer(minLength: 8)
+                if item.isFolder {
+                    Menu("Everything Inside") {
+                        Button("Roll Forward") { set(item, contents: .copy) }
+                        Button("Placeholder Only") { set(item, contents: .placeholder) }
+                        Button("Don't Roll Forward") { set(item, contents: .skip) }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(effective == .skip)
+                } else {
+                    Picker("", selection: Binding(get: { own }, set: { choices[item.path] = $0 })) {
+                        Text("Roll forward").tag(BinderRollChoice.copy)
+                        Text("Placeholder only").tag(BinderRollChoice.placeholder)
+                        Text("Don't roll forward").tag(BinderRollChoice.skip)
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
+                    .disabled(blocked)
+                }
+            }
+            .font(.system(size: 12.5))
+            .opacity(effective == .skip ? 0.45 : 1)
+        }
+        .listStyle(.inset(alternatesRowBackgrounds: true))
+    }
+
+    private func chooseDestination(_ summary: RollForwardSummary) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.directoryURL = model.folder?.deletingLastPathComponent()
+        panel.message = "Choose the folder for the \(summary.toYear) binder (or make a new one)"
+        panel.prompt = "Use This Folder"
+        if panel.runModal() == .OK, let url = panel.url {
+            if url.standardizedFileURL == model.folder?.standardizedFileURL {
+                model.alert = AlertInfo(title: "That is this year's binder", message: "Choose a different folder for \(summary.toYear).")
+            } else {
+                destination = url
+            }
         }
     }
 }

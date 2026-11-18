@@ -99,6 +99,17 @@ extension Engagement {
         entities[i].name = name
     }
 
+    /// Sets the activity number a trial balance is imported under in the tax software. Blank
+    /// clears it. Two trial balances can't share a number.
+    public mutating func setActivityNumber(_ raw: String, for id: String) throws {
+        let number = raw.trimmed
+        guard let i = entities.firstIndex(where: { $0.id == id }) else { throw TBError("Trial balance not found.") }
+        if !number.isEmpty, let other = entities.first(where: { $0.id != id && $0.activityNumber.caseInsensitiveCompare(number) == .orderedSame }) {
+            throw TBError("Activity \(number) is already “\(other.name)”. Each trial balance needs its own activity number.")
+        }
+        entities[i].activityNumber = number
+    }
+
     public func entries(touching entityID: String) -> [JournalEntry] {
         journalEntries.filter { je in je.lines.contains { $0.entity == entityID } }
     }
@@ -694,9 +705,9 @@ extension Engagement {
         if !entry.imbalance.isZero {
             errors.append("Out of balance by \(entry.imbalance.cents > 0 ? entry.imbalance.grouped : (-entry.imbalance).grouped): debits \(entry.totalDebits.grouped), credits \(entry.totalCredits.grouped).")
         }
-        if entry.type != .eliminating && Set(entry.lines.map(\.entity)).count > 1 {
+        if !entry.type.canSpanTrialBalances && Set(entry.lines.map(\.entity)).count > 1 {
             let article = entry.type == .adjusting ? "An" : "A"
-            errors.append("\(article) \(entry.type.label.lowercased()) entry must post to a single trial balance. Only eliminating entries can span trial balances.")
+            errors.append("\(article) \(entry.type.label.lowercased()) entry must post to a single trial balance. Only reclassifying and eliminating entries can span trial balances.")
         }
         return errors
     }

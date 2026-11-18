@@ -128,19 +128,67 @@ final class TBCoreTests: XCTestCase {
 
     // MARK: Posting rules
 
-    func testOnlyEliminatingEntriesMaySpanTrialBalances() throws {
+    func testWhichEntriesMaySpanTrialBalances() throws {
         var e = try sampleEngagement()
-        for type in [JEType.adjusting, .reclassifying, .taxOnly] {
+        // Adjusting and tax-only entries post to one trial balance.
+        for type in [JEType.adjusting, .taxOnly] {
             let je = JournalEntry(number: "X-1", type: type, date: "2026-12-31",
                                   lines: [line("ashford", "51200", "100"), line("brighton", "51200", "-100")])
             XCTAssertThrowsError(try e.post(je), type.rawValue) { error in
                 XCTAssertTrue(error.localizedDescription.contains("single trial balance"))
             }
         }
+        XCTAssertFalse(JEType.adjusting.canSpanTrialBalances)
+        XCTAssertFalse(JEType.taxOnly.canSpanTrialBalances)
+        // A reclassifying entry can name a trial balance on each line: overhead allocated in one entry.
+        let before = Ledger(e)
+        let allocation = JournalEntry(number: "RJE-1", type: .reclassifying, date: "2026-12-31", description: "Allocate management overhead",
+                                      lines: [line("ashford", "51155", "300"), line("clayton", "51155", "200"), line("brighton", "51155", "-500")])
+        XCTAssertNoThrow(try e.post(allocation))
+        let l = Ledger(e)
+        XCTAssertEqual(l.value(.rje, entity: "ashford", account: "51155"), m("300"))
+        XCTAssertEqual(l.value(.rje, entity: "clayton", account: "51155"), m("200"))
+        XCTAssertEqual(l.value(.rje, entity: "brighton", account: "51155"), m("-500"))
+        XCTAssertEqual(l.value(.adjusted, entity: "ashford", account: "51155"), before.value(.adjusted, entity: "ashford", account: "51155"))
+        // The consolidation is unchanged in total; each trial balance has moved by its share.
+        XCTAssertEqual(l.consolidated(.book, account: "51155"), before.consolidated(.book, account: "51155"))
+        XCTAssertEqual(l.consolidatedTotal(.book), .zero)
+        XCTAssertEqual(l.total(.book, entity: "ashford"), m("300"))
+        XCTAssertEqual(e.issues(), [])
+        XCTAssertEqual(try Store.decode(Store.encode(e)), e)
+        // It still has to balance as a whole.
+        XCTAssertThrowsError(try e.post(JournalEntry(number: "RJE-2", type: .reclassifying, date: "2026-12-31",
+                                                     lines: [line("ashford", "51155", "300"), line("brighton", "51155", "-200")])))
         let elim = JournalEntry(number: "EJE-1", type: .eliminating, date: "2026-12-31",
                                 lines: [line("ashford", "51200", "100"), line("brighton", "51200", "-100")])
         XCTAssertNoThrow(try e.post(elim))
-        XCTAssertEqual(e.journalEntries.count, 1)
+        XCTAssertEqual(e.journalEntries.count, 2)
+        // An entry that spans trial balances can't be turned into an adjusting or tax-only one.
+        var converted = allocation
+        converted.type = .adjusting
+        XCTAssertFalse(e.validationErrors(for: converted).filter { $0.contains("single trial balance") }.isEmpty)
+    }
+
+    func testActivityNumbersPerTrialBalance() throws {
+        var e = try sampleEngagement()
+        try e.setActivityNumber(" 1 ", for: "ashford")
+        try e.setActivityNumber("2", for: "brighton")
+        XCTAssertEqual(e.entity("ashford")?.activityNumber, "1")
+        XCTAssertThrowsError(try e.setActivityNumber("1", for: "clayton"))   // each trial balance has its own
+        try e.setActivityNumber("", for: "brighton")                          // blank clears it
+        try e.setActivityNumber("2", for: "clayton")
+        XCTAssertEqual(try Store.decode(Store.encode(e)), e)
+        XCTAssertTrue(String(data: Store.encode(e), encoding: .utf8)!.contains("\"activityNumber\": \"1\""))
+        // It heads that trial balance's report and is a column of the data export.
+        let reports = Reports(e)
+        XCTAssertEqual(reports.entityTrialBalance(entityID: "ashford", hideZero: true).title, "Ashford (Activity 1) — Trial Balance")
+        XCTAssertEqual(reports.entityTrialBalance(entityID: "brighton", hideZero: true).title, "Brighton — Trial Balance")
+        let data = reports.tidy()
+        let column = data.columns.firstIndex { $0.title == "Activity" }!
+        XCTAssertEqual(data.rows.first { $0.entityID == "ashford" }?.cells[column], .text("1"))
+        XCTAssertEqual(data.rows.first { $0.entityID == "brighton" }?.cells[column], .text(""))
+        // And it carries into next year's file.
+        XCTAssertEqual(try e.rolledForward().entity("clayton")?.activityNumber, "2")
     }
 
     func testEntryMustBalanceAndReferenceRealThings() throws {

@@ -28,8 +28,12 @@ the client's folder**. No server, no account, no database.
   account type, and an account's type is simply its grouping's: it is never set on the account,
   so the two cannot disagree. Ungrouped accounts raise an alert.
 - **Links workpapers to entries** and tells you when a linked file has been moved or renamed.
-- **Carries prior years** as PP1, PP2… columns, and **rolls forward** to next year's file, with
-  each entry marked to carry over with amounts, without amounts, as a reversal, or not at all.
+- **Carries prior years** as PP1, PP2… columns, and **rolls forward** to next year, with each
+  entry marked to carry over with amounts, without amounts, as a reversal, or not at all.
+- **Manages the binder**: the client's folder for the year, with numbered folders and indexed
+  workpapers. It shows the whole binder opened out, adds and changes index numbers without two
+  ever colliding, flags loose and unindexed files, and rolls the folder structure forward with
+  the trial balance, copying each file, leaving a placeholder, or leaving it behind.
 - **Exports** to Excel (a formatted workbook with binder headings), CSV and JSON, and reads and
   writes a plain, documented file format that scripts and AI assistants can work with directly.
 
@@ -46,7 +50,7 @@ everything the tool does.
 |---|---|
 | ![One trial balance](docs/images/trial-balance.png) **One trial balance** with its adjustment columns and prior year | ![Grouping summary](docs/images/grouping-summary.png) **Grouping summary** with subgroups nested and net income pinned at the bottom |
 | ![Journal entry](docs/images/entry-editor.png) **A journal entry** in its own window, with linked workpapers | ![Import](docs/images/import.png) **Importing**: the predicted layout, shown for confirmation |
-| ![Roll forward](docs/images/roll-forward.png) **Rolling forward** to next year | ![Standard grouping lists](docs/images/app-settings.png) **Standard grouping lists** by entity type |
+| ![Roll forward](docs/images/roll-forward.png) **Rolling forward** the trial balance and the binder | ![The binder](docs/images/binder.png) **The binder**, with index numbers and alerts |
 
 ## Getting it
 
@@ -106,7 +110,7 @@ reader and writer are part of the engine.
 ## Your data
 
 TB Tool never sends anything anywhere. A client's file is one JSON document that you can read
-in any text editor; the format is described in [the manual](docs/MANUAL.md#14-the-json-file).
+in any text editor; the format is described in [the manual](docs/MANUAL.md#15-the-json-file).
 Backups go in a `TB Backups` folder beside it. Standard grouping lists, saved import layouts,
 saved filters and window positions are kept on your Mac under `~/Library`.
 

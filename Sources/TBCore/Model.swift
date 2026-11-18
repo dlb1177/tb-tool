@@ -69,6 +69,11 @@ public enum JEType: String, CaseIterable, Sendable {
         }
     }
 
+    /// Adjusting and tax-only entries post to one trial balance. A reclassifying entry may name a
+    /// trial balance on each line (allocating overhead across properties in one entry), and an
+    /// eliminating entry always does.
+    public var canSpanTrialBalances: Bool { self == .reclassifying || self == .eliminating }
+
     public var label: String {
         switch self {
         case .adjusting: return "Adjusting"
@@ -216,6 +221,8 @@ public struct Entity: Equatable, Identifiable, Sendable {
     public var importedAt: String = ""
     /// Set when the unadjusted balances were last changed by hand in the app.
     public var editedAt: String = ""
+    /// The activity number this trial balance is imported under in the tax software (CCH), if it has one.
+    public var activityNumber: String = ""
     public var balances: [Balance] = []
     public var priorPeriods: [PriorPeriod] = []
 

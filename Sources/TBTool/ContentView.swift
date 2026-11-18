@@ -155,6 +155,7 @@ struct MainView: View {
         case .accounts: AccountsView()
         case .groupings: GroupingsView()
         case .reports: ReportsView()
+        case .binder: BinderView()
         }
     }
 
@@ -188,8 +189,6 @@ struct MainView: View {
 struct Sidebar: View {
     @EnvironmentObject private var model: AppModel
     @Binding var showIssues: Bool
-    @State private var renaming: Entity?
-    @State private var renameText = ""
     @State private var deleting: Entity?
 
     var body: some View {
@@ -202,14 +201,12 @@ struct Sidebar: View {
                 Section("Trial Balances") {
                     ForEach(e.entities) { entity in
                         Label(entity.name, systemImage: "building.2")
+                            .badge(entity.activityNumber.isEmpty ? nil : Text("Act. \(entity.activityNumber)"))
                             .tag(SidebarItem.entity(entity.id))
                             .contextMenu {
                                 Button("New Adjusting Entry") { model.newEntry(.adjusting, entityID: entity.id) }
                                 Divider()
-                                Button("Rename…") {
-                                    renameText = entity.name
-                                    renaming = entity
-                                }
+                                Button("Details…") { model.showEntityDetails(entity.id) }
                                 Button("Edit Unadjusted Balances…") { model.showBalanceEditor(entityID: entity.id, priorYear: nil) }
                                 Button("Replace Balances from File…") { model.importPanel(replacing: entity.id) }
                                 Divider()
@@ -238,21 +235,15 @@ struct Sidebar: View {
                         .tag(SidebarItem.groupings)
                     Label("Reports & Export", systemImage: "doc.richtext")
                         .tag(SidebarItem.reports)
+                    Label("Binder", systemImage: "folder")
+                        .badge(model.binderAlerts.count)
+                        .tag(SidebarItem.binder)
+                        .help("The folders and workpapers in this trial balance's folder, with their index numbers")
                 }
             }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { dataCheck }
-        .alert("Rename Trial Balance", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Rename") {
-                if let entity = renaming {
-                    model.mutate("Rename Trial Balance") { try $0.renameEntity(entity.id, to: renameText) }
-                }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        }
         .confirmationDialog(deleteTitle, isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Delete", role: .destructive) {
                 if let entity = deleting {
@@ -283,6 +274,7 @@ struct Sidebar: View {
             HStack(spacing: 6) {
                 // Ungrouped accounts count once, however many there are.
                 let problems = model.issues.count + model.brokenLinks.count + ((model.engagement?.ungroupedAccounts.isEmpty ?? true) ? 0 : 1)
+                    + model.binderAlerts.count
                 if problems == 0 {
                     CheckBadge(ok: true, text: "Data check: clean")
                 } else {
@@ -311,6 +303,20 @@ struct Sidebar: View {
                         }
                     }
                 }
+                if !model.binderAlerts.isEmpty {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.binderAlerts, id: \.self) { line in
+                                Label(line, systemImage: "exclamationmark.triangle").font(.callout)
+                            }
+                        }
+                        Spacer()
+                        Button("Open Binder") {
+                            showIssues = false
+                            model.selection = .binder
+                        }
+                    }
+                }
                 if let e = model.engagement, !e.ungroupedAccounts.isEmpty {
                     let n = e.ungroupedAccounts.count
                     HStack {
@@ -323,7 +329,7 @@ struct Sidebar: View {
                         }
                     }
                 }
-                if model.issues.isEmpty && (!model.brokenLinks.isEmpty || !(model.engagement?.ungroupedAccounts.isEmpty ?? true)) {
+                if model.issues.isEmpty && (!model.brokenLinks.isEmpty || !(model.engagement?.ungroupedAccounts.isEmpty ?? true) || !model.binderAlerts.isEmpty) {
                     EmptyView()
                 } else if model.issues.isEmpty {
                     Text("Every trial balance is in balance, every entry balances and follows the posting rules, and every reference points at something that exists.")
