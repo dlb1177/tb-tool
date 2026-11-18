@@ -117,8 +117,13 @@ final class AppModel: ObservableObject {
     func displayPath(_ url: URL) -> String {
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--tb-display-folder"), i + 1 < args.count, let folder {
-            let real = folder.standardizedFileURL.path
-            let path = url.standardizedFileURL.path
+            // /private/tmp and /tmp are the same place; a folder that doesn't exist yet keeps the long form.
+            func plain(_ u: URL) -> String {
+                let p = u.standardizedFileURL.path
+                return p.hasPrefix("/private/") ? String(p.dropFirst("/private".count)) : p
+            }
+            let real = plain(folder)
+            let path = plain(url)
             if path.hasPrefix(real) { return args[i + 1] + path.dropFirst(real.count) }
             // A folder beside it (next year's binder) is shown beside the stand-in too.
             let parent = (real as NSString).deletingLastPathComponent
