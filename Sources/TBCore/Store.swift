@@ -6,11 +6,11 @@ import Foundation
 /// two-decimal numbers split into debit / credit, one record per line, in a fixed key order.
 public enum Store {
     public static let fileType = "trial-balance"
-    public static let schemaVersion = 4
+    public static let schemaVersion = 5
 
     private static let knownKeys: Set<String> = [
         "fileType", "schemaVersion", "name", "periodEnd", "binder", "groupingListName", "rolledForwardFrom",
-        "entities", "journalEntries", "accounts", "groupings",
+        "entities", "journalEntries", "accounts", "groupings", "signOffs", "auditLog",
     ]
 
     // MARK: Files
@@ -66,8 +66,31 @@ public enum Store {
             JSONField("accounts", .array(e.accounts.map(json))),
             JSONField("groupings", .array(e.groupings.map(json))),
         ]
+        if !e.signOffs.isEmpty {
+            fields.append(JSONField("signOffs", .array(e.signOffs.map { s in
+                .object([JSONField("path", .string(s.path)), JSONField("level", .string(s.level.rawValue)), JSONField("at", .string(s.at)),
+                         JSONField("by", json(s.actor)), JSONField("fileHash", .string(s.fileHash))])
+            })))
+        }
+        if !e.auditLog.isEmpty {
+            fields.append(JSONField("auditLog", .array(e.auditLog.map { a in
+                .object([JSONField("at", .string(a.at)), JSONField("action", .string(a.action)),
+                         JSONField("details", .array(a.details.map { .string($0) })), JSONField("by", json(a.actor)), JSONField("hash", .string(a.hash))])
+            })))
+        }
         fields.append(contentsOf: e.extras)
         return .object(fields)
+    }
+
+    static func json(_ a: Actor) -> JSONValue {
+        .object([JSONField("name", .string(a.name)), JSONField("account", .string(a.account)),
+                 JSONField("computer", .string(a.computer)), JSONField("device", .string(a.device))])
+    }
+
+    static func actor(_ any: Any?, _ path: String) throws -> Actor {
+        guard let any else { return Actor(name: "", account: "", computer: "", device: "") }
+        let o = try JSONObject(any, path)
+        return Actor(name: o.optString("name"), account: o.optString("account"), computer: o.optString("computer"), device: o.optString("device"))
     }
 
     static func json(_ b: Binder) -> JSONValue {
@@ -142,7 +165,10 @@ public enum Store {
                 ])
             })),
             JSONField("references", .array(je.references.map { r in
-                .object([JSONField("path", .string(r.path)), JSONField("note", .string(r.note))])
+                var fields = [JSONField("path", .string(r.path)), JSONField("note", .string(r.note))]
+                if !r.sheet.isEmpty { fields.append(JSONField("sheet", .string(r.sheet))) }
+                if !r.cells.isEmpty { fields.append(JSONField("cells", .string(r.cells))) }
+                return .object(fields)
             })),
         ])
     }
@@ -271,6 +297,18 @@ public enum Store {
             e.journalEntries.append(try decodeEntry(item, path: "journalEntries[\(i)]"))
         }
 
+        for (i, item) in root.array("signOffs").enumerated() {
+            let o = try JSONObject(item, "signOffs[\(i)]")
+            guard let level = SignOffLevel(rawValue: o.optString("level")) else { continue }
+            e.signOffs.append(SignOff(path: try o.string("path"), level: level, actor: try actor(o.dict["by"], "signOffs[\(i)].by"),
+                                      at: o.optString("at"), fileHash: o.optString("fileHash")))
+        }
+        for (i, item) in root.array("auditLog").enumerated() {
+            let o = try JSONObject(item, "auditLog[\(i)]")
+            e.auditLog.append(AuditEntry(at: o.optString("at"), action: o.optString("action"),
+                                         details: o.array("details").compactMap { $0 as? String },
+                                         actor: try actor(o.dict["by"], "auditLog[\(i)].by"), hash: o.optString("hash")))
+        }
         e.extras = root.dict.keys.sorted()
             .filter { !knownKeys.contains($0) }
             .map { JSONField($0, JSONValue.from(any: root.dict[$0]!)) }
@@ -305,7 +343,8 @@ public enum Store {
                 je.references.append(FileReference(path: s))
             } else {
                 let ro = try JSONObject(r, "\(path).references[\(j)]")
-                je.references.append(FileReference(path: try ro.string("path"), note: ro.optString("note")))
+                je.references.append(FileReference(path: try ro.string("path"), note: ro.optString("note"),
+                                                   sheet: ro.optString("sheet"), cells: ro.optString("cells")))
             }
         }
         return je

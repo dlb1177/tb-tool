@@ -244,7 +244,6 @@ struct JournalEditor: View {
     @State private var rollForward: RollForward
     @State private var baseline: JournalEntry?
     @State private var confirmDelete = false
-    @State private var dropTargeted = false
     /// Set while the type picker is being put back after a change that isn't allowed.
     @State private var revertingType = false
 
@@ -293,7 +292,16 @@ struct JournalEditor: View {
         je.date = Timestamp.dayString(date)
         je.description = descriptionText
         je.lines = out
-        je.references = references
+        je.references = references.map { r in
+            var r = r
+            r.sheet = r.sheet.trimmingCharacters(in: .whitespaces)
+            r.cells = WorkbookTabs.cells(r.cells) ?? r.cells
+            return r
+        }
+        for r in je.references where r.isWorkbook {
+            if r.sheet.isEmpty { errors.append("Choose the tab of “\(r.fileName)” this entry refers to.") }
+            if WorkbookTabs.cells(r.cells) == nil { errors.append("“\(r.cells)” isn't a cell reference. Type cells like B4 or B4:D10, or leave them out.") }
+        }
         je.rollForward = rollForward
         // Filling in the amounts completes an entry that was rolled forward without them.
         je.pending = false
@@ -553,24 +561,44 @@ struct JournalEditor: View {
         lines.append(line)
     }
 
-    // MARK: Linked files
+    // MARK: References
+
+    /// Every indexed file in the binder, in index order whatever folder it is in, in the shape
+    /// the search field lists: the index where an account's number goes, the name after it.
+    private var binderChoices: [Account] {
+        (model.binder?.indexedFiles ?? []).map { item in
+            var a = Account(number: item.index?.text ?? "", name: item.title, type: .asset)
+            a.id = item.path
+            return a
+        }
+    }
 
     private var referencesSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Linked Files").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    for ref in model.chooseFilesToLink() where !references.contains(where: { $0.path == ref.path }) {
-                        references.append(ref)
-                    }
-                } label: {
-                    Label("Link File…", systemImage: "paperclip")
+        let choices = binderChoices
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text("References").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                if choices.isEmpty {
+                    Text(model.binder == nil ? "This file isn't in a binder folder, so there are no workpapers to refer to."
+                                             : "No indexed files in the binder yet. Index the workpapers on the Binder screen to refer to them here.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    AccountSearchField(accounts: choices, accountID: .constant(nil),
+                                       placeholder: "Add a reference — type an index or part of a file name (\(choices.count) indexed file\(choices.count == 1 ? "" : "s"))",
+                                       detail: { a in
+                                           let folder = ((a.id as NSString).deletingLastPathComponent as NSString).lastPathComponent
+                                           return BinderPlaceholder.isPlaceholder((a.id as NSString).lastPathComponent) ? "placeholder · \(folder)" : folder
+                                       },
+                                       keepOrder: true,
+                                       onChoose: { path in references.append(FileReference(path: path)) })
+                        .frame(maxWidth: 560)
                 }
+                Spacer()
             }
             VStack(spacing: 0) {
                 if references.isEmpty {
-                    Text("Link the workpapers that support this entry, or drop files here.")
+                    Text("Refer to the workpapers that support this entry. Pick them from the binder's indexed files above.")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 } else {
@@ -581,27 +609,18 @@ struct JournalEditor: View {
                 }
             }
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035)))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(dropTargeted ? Color.accentColor : Color.primary.opacity(0.1),
-                                                                    lineWidth: dropTargeted ? 2 : 1))
-            .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-                for provider in providers {
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                        guard let url else { return }
-                        DispatchQueue.main.async {
-                            let ref = FileReference(file: url, engagementFolder: model.folder)
-                            if !references.contains(where: { $0.path == ref.path }) { references.append(ref) }
-                        }
-                    }
-                }
-                return true
-            }
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.1), lineWidth: 1))
         }
     }
 
     private func referenceRow(_ value: FileReference, index: Int) -> some View {
         let found = model.exists(value)
-        let note = Binding<String>(get: { index < references.count ? references[index].note : "" },
-                                   set: { if index < references.count { references[index].note = $0 } })
+        func field(_ path: WritableKeyPath<FileReference, String>) -> Binding<String> {
+            Binding(get: { index < references.count ? references[index][keyPath: path] : "" },
+                    set: { if index < references.count { references[index][keyPath: path] = $0 } })
+        }
+        let tabs = value.isWorkbook ? model.sheetNames(for: value) : nil
+        let cellsOK = WorkbookTabs.cells(value.cells) != nil
         return HStack(spacing: 8) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: model.url(for: value).path))
                 .resizable()
@@ -610,24 +629,44 @@ struct JournalEditor: View {
             VStack(alignment: .leading, spacing: 1) {
                 Button(value.fileName) { model.openReference(value) }
                     .buttonStyle(.link)
-                Text(found ? value.path : "Not found — moved or renamed: \(value.path)")
+                    .help(value.isWorkbook && !value.sheet.isEmpty
+                          ? "Opens the workbook in Excel on “\(value.sheet)”\(value.cells.isEmpty ? "" : ", with \(value.cells) selected")"
+                          : "Opens the file")
+                Text(found ? value.path : "Not found — moved or renamed: \(value.path). Remove it and pick the file again.")
                     .font(.caption)
                     .foregroundStyle(found ? Color.secondary : Color.orange)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            if !found {
-                Button("Locate…") {
-                    if let path = model.locateFile(for: value), index < references.count {
-                        references[index].path = path
+            if value.isWorkbook {
+                // A workbook reference always says which tab, even when the workbook has only one.
+                if let tabs {
+                    Picker("Tab", selection: field(\.sheet)) {
+                        if value.sheet.isEmpty { Text("Choose the tab…").tag("") }
+                        ForEach(tabs, id: \.self) { Text($0).tag($0) }
+                        if !value.sheet.isEmpty && !tabs.contains(value.sheet) { Text("\(value.sheet) (not in the workbook)").tag(value.sheet) }
                     }
+                    .labelsHidden()
+                    .frame(width: 170)
+                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.orange, lineWidth: value.sheet.isEmpty || !tabs.contains(value.sheet) ? 1.5 : 0))
+                    .help("The tab of the workbook this entry refers to")
+                } else {
+                    TextField("Tab name", text: field(\.sheet))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 170)
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.orange, lineWidth: value.sheet.trimmingCharacters(in: .whitespaces).isEmpty ? 1.5 : 0))
+                        .help("The tabs of this workbook can't be read here (an .xls or .xlsb file, or one that can't be found), so type the tab's name")
                 }
-                .help("Point this link at where the file is now")
+                TextField("Cells (optional)", text: field(\.cells))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 112)
+                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.orange, lineWidth: cellsOK ? 0 : 1.5))
+                    .help("The cells on that tab, like B4 or B4:D10. Clicking the file's name then opens Excel with them selected.")
             }
-            TextField("Note (tab, page, cell…)", text: note)
+            TextField("Note (page, line…)", text: field(\.note))
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
+                .frame(width: value.isWorkbook ? 170 : 220)
             Button {
                 model.reveal(model.url(for: value))
             } label: {
@@ -642,7 +681,7 @@ struct JournalEditor: View {
                 Image(systemName: "xmark.circle")
             }
             .buttonStyle(.borderless)
-            .help("Remove this link (the file itself is not touched)")
+            .help("Remove this reference (the file itself is not touched)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

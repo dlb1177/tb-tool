@@ -39,8 +39,9 @@ extension Engagement {
         var n = 0
         for i in journalEntries.indices {
             for j in journalEntries[i].references.indices where journalEntries[i].references[j].path == oldPath {
-                // Don't leave the same file linked twice on one entry.
-                if journalEntries[i].references.contains(where: { $0.path == newPath }) {
+                // Don't leave the same file (and the same tab and cells of it) linked twice on one entry.
+                let mine = journalEntries[i].references[j]
+                if journalEntries[i].references.contains(where: { $0.path == newPath && $0.sheet == mine.sheet && $0.cells == mine.cells }) {
                     journalEntries[i].references[j].path = ""
                 } else {
                     journalEntries[i].references[j].path = newPath

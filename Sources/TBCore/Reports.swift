@@ -198,15 +198,61 @@ public struct Reports {
         var t = table("Grouping \(detail ? "Detail" : "Summary") — \(basis.label) Basis", sheet: detail ? "Grouping Detail" : "Groupings",
                       columns: [.text("Code", 76), .text("Grouping", 280)] + consolidationColumns(years, basis))
         let width = t.columns.count - 2
-        let zero = [Money](repeating: .zero, count: width)
-        var members: [String: [(Account, [Money])]] = [:]
-        var ungrouped: [(Account, [Money])] = []
-        var grand = zero, income = zero
+        var grand = [Money](repeating: .zero, count: width), income = grand
+        var shown: [(Account, [Money])] = []
         for a in accounts where ledger.activeAccounts.contains(a.id) {
             let v = consolidationVector(a.id, basis, years)
             add(&grand, v)
             if a.type.isIncomeStatement { subtract(&income, v) }
             if hideZero && v.allSatisfy(\.isZero) { continue }
+            shown.append((a, v))
+        }
+        t.rows = outline(shown, width: width, detail: detail, hideZero: hideZero)
+        t.rows.append(ReportRow(id: "total", cells: [.empty, .text("Total (zero when in balance)")] + grand.map { .money($0) }, style: .total))
+        t.rows.append(ReportRow(id: "income", cells: [.empty, .text("Net income (loss)")] + income.map { .money($0) }, style: .subtotal))
+        return t
+    }
+
+    /// One trial balance laid out like the grouping detail report: its accounts under their
+    /// groupings and subgroups, each with a total, section by section. The columns are the same
+    /// as the plain trial balance's.
+    public func entityByGrouping(entityID: String, hideZero: Bool, prior: Int = 0, priorBasis: Basis = .book) -> ReportTable {
+        let ent = entityByID[entityID]
+        let columns = EntityColumn.allCases
+        let years = years(prior)
+        let activity = (ent?.activityNumber.isEmpty ?? true) ? "" : " (Activity \(ent!.activityNumber))"
+        var t = table("\(ent?.name ?? entityID)\(activity) — Trial Balance by Grouping", sheet: ent?.name ?? entityID,
+                      columns: [.text("Code", 76), .text("Grouping", 280)]
+                          + columns.map { .money($0.title) } + priorColumns(years, basis: priorBasis, markTax: true))
+        let width = t.columns.count - 2
+        let active = ledger.activeAccounts(in: entityID)
+        var grand = [Money](repeating: .zero, count: width), income = grand
+        var shown: [(Account, [Money])] = []
+        for a in accounts where active.contains(a.id) {
+            var v = columns.map { ledger.value($0, entity: entityID, account: a.id) }
+            if !years.isEmpty {
+                let past = years.map { ledger.prior(priorBasis, year: $0, entity: entityID, account: a.id) }
+                v += past + [ledger.balance(priorBasis, entity: entityID, account: a.id) - past[0]]
+            }
+            add(&grand, v)
+            if a.type.isIncomeStatement { subtract(&income, v) }
+            if hideZero && v.allSatisfy(\.isZero) { continue }
+            shown.append((a, v))
+        }
+        t.rows = outline(shown, width: width, detail: true, hideZero: hideZero, entityID: entityID)
+        t.rows.append(ReportRow(id: "total", cells: [.empty, .text("Total (zero when in balance)")] + grand.map { .money($0) }, style: .total))
+        t.rows.append(ReportRow(id: "income", cells: [.empty, .text("Net income (loss)")] + income.map { .money($0) }, style: .subtotal))
+        return t
+    }
+
+    /// The grouping outline over a set of accounts and their amounts: sections, groupings with
+    /// their totals, subgroups nested, and (with `detail`) the accounts inside each. Accounts
+    /// with no grouping come last, one by one.
+    private func outline(_ shown: [(Account, [Money])], width: Int, detail: Bool, hideZero: Bool, entityID: String? = nil) -> [ReportRow] {
+        let zero = [Money](repeating: .zero, count: width)
+        var members: [String: [(Account, [Money])]] = [:]
+        var ungrouped: [(Account, [Money])] = []
+        for (a, v) in shown {
             if let g = a.grouping, groupingByID[g] != nil {
                 members[g, default: []].append((a, v))
             } else {
@@ -222,10 +268,11 @@ public struct Reports {
         func accountRows(_ list: [(Account, [Money])], under id: String, indent: String) -> [ReportRow] {
             list.map { a, v in
                 ReportRow(id: "\(id):a:\(a.id)", cells: [.text(a.number), .text(indent + a.name)] + v.map { .money($0) },
-                          accountID: a.id, accountType: a.type)
+                          accountID: a.id, entityID: entityID, accountType: a.type)
             }
         }
         let groupStyle: ReportRow.Style = detail ? .subtotal : .normal
+        var out: [ReportRow] = []
 
         for section in e.groupingSections {
             var rows: [ReportRow] = []
@@ -259,21 +306,19 @@ public struct Reports {
                 }
             }
             if rows.isEmpty { continue }
-            t.rows.append(ReportRow(id: "s:\(section)", cells: [.empty, .text(section.uppercased())] + blanks(), style: .section))
-            t.rows += rows
-            t.rows.append(ReportRow(id: "st:\(section)", cells: [.empty, .text("Total \(section)")] + sectionTotal.map { .money($0) }, style: .subtotal))
+            out.append(ReportRow(id: "s:\(section)", cells: [.empty, .text(section.uppercased())] + blanks(), style: .section))
+            out += rows
+            out.append(ReportRow(id: "st:\(section)", cells: [.empty, .text("Total \(section)")] + sectionTotal.map { .money($0) }, style: .subtotal))
         }
         if !ungrouped.isEmpty {
-            t.rows.append(ReportRow(id: "s:ungrouped", cells: [.empty, .text("UNGROUPED ACCOUNTS")] + blanks(), style: .section))
+            out.append(ReportRow(id: "s:ungrouped", cells: [.empty, .text("UNGROUPED ACCOUNTS")] + blanks(), style: .section))
             for (a, v) in ungrouped {
-                t.rows.append(ReportRow(id: "u:\(a.id)", cells: [.text(a.number), .text("    " + a.name)] + v.map { .money($0) },
-                                        accountID: a.id, accountType: a.type))
+                out.append(ReportRow(id: "u:\(a.id)", cells: [.text(a.number), .text("    " + a.name)] + v.map { .money($0) },
+                                     accountID: a.id, entityID: entityID, accountType: a.type))
             }
-            t.rows.append(ReportRow(id: "st:ungrouped", cells: [.empty, .text("Total ungrouped")] + sum(ungrouped).map { .money($0) }, style: .subtotal))
+            out.append(ReportRow(id: "st:ungrouped", cells: [.empty, .text("Total ungrouped")] + sum(ungrouped).map { .money($0) }, style: .subtotal))
         }
-        t.rows.append(ReportRow(id: "total", cells: [.empty, .text("Total (zero when in balance)")] + grand.map { .money($0) }, style: .total))
-        t.rows.append(ReportRow(id: "income", cells: [.empty, .text("Net income (loss)")] + income.map { .money($0) }, style: .subtotal))
-        return t
+        return out
     }
 
     /// The accounts inside one grouping, with every consolidation column. A grouping with
@@ -336,7 +381,7 @@ public struct Reports {
         for je in sortedEntries() where !je.pending {
             if let types, !types.contains(je.type) { continue }
             if let entityID, !je.lines.contains(where: { $0.entity == entityID }) { continue }
-            let refs = je.references.map(\.path).joined(separator: "; ")
+            let refs = je.references.map { $0.location.isEmpty ? $0.path : "\($0.path) [\($0.location)]" }.joined(separator: "; ")
             for (i, l) in je.lines.enumerated() {
                 debits += l.amount.debit
                 credits += l.amount.credit
@@ -474,6 +519,52 @@ public struct Reports {
     /// The sheets of the full workbook export, in order.
     /// Prior-year columns (the most recent `prior` years) are included where there are any.
     /// The Data sheet always carries every row, zero or not.
+    // MARK: The paper trail
+
+    /// The change log, oldest first: when, what was done, what it changed, who did it and on which Mac.
+    public func changeLog() -> ReportTable {
+        var t = table("Change Log", sheet: "Change Log",
+                      columns: [.text("When (UTC)", 150), .text("Action", 210), .text("What changed", 460), .text("Name", 130),
+                                .text("Login", 90), .text("Computer", 170), .text("Device ID", 260)])
+        for (i, a) in e.auditLog.enumerated() {
+            t.rows.append(ReportRow(id: "log:\(i)", cells: [.text(a.at), .text(a.action), .text(a.details.joined(separator: "; ")), .text(a.actor.name),
+                                                            .text(a.actor.account), .text(a.actor.computer), .text(a.actor.device)]))
+        }
+        return t
+    }
+
+    /// Every workpaper that has been signed off, and by whom: one row per file, in index order.
+    public func signOffs() -> ReportTable {
+        var columns: [ReportColumn] = [.text("Index", 80), .text("Workpaper", 300), .text("Folder", 220)]
+        for level in SignOffLevel.allCases { columns += [.text("\(level.label) by", 140), .text("\(level.label) (UTC)", 150)] }
+        var t = table("Workpaper Sign-offs", sheet: "Sign-offs", columns: columns)
+        var paths: [String] = []
+        for s in e.signOffs where !paths.contains(s.path) { paths.append(s.path) }
+        paths.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+        func named(_ path: String) -> (index: String, title: String) {
+            let parsed = BinderIndex.parse((path as NSString).lastPathComponent, isFolder: false)
+            return (parsed.index?.text ?? "", parsed.title)
+        }
+        paths.sort { a, b in
+            let x = named(a), y = named(b)
+            if x.index.isEmpty != y.index.isEmpty { return !x.index.isEmpty }
+            return (x.index + " " + x.title).localizedStandardCompare(y.index + " " + y.title) == .orderedAscending
+        }
+        for path in paths {
+            let name = named(path)
+            var cells: [ReportCell] = [.text(name.index), .text(name.title), .text((path as NSString).deletingLastPathComponent)]
+            for level in SignOffLevel.allCases {
+                if let s = e.signOff(level, for: path) {
+                    cells += [.text(s.actor.display), .text(s.at)]
+                } else {
+                    cells += [.empty, .empty]
+                }
+            }
+            t.rows.append(ReportRow(id: "so:\(path)", cells: cells))
+        }
+        return t
+    }
+
     public func workbook(prior: Int = 1, hideZero: Bool = true) -> [ReportTable] {
         var out = [consolidating(basis: .book, hideZero: hideZero, prior: prior)]
         if e.journalEntries.contains(where: { $0.type == .taxOnly && !$0.pending }) {

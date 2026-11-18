@@ -216,17 +216,22 @@ final class BinderTests: XCTestCase {
         XCTAssertEqual(BinderRoller.effective("4000 Support/4000.01 Organizer.pdf", choices), .skip)
 
         let result = try BinderRoller.roll(tree, to: dest, choices: choices)
-        XCTAssertEqual(result, BinderRollResult(folders: 6, copied: 2, placeholders: 2, alreadyThere: []))
+        XCTAssertEqual([result.folders, result.copied, result.placeholders, result.alreadyThere.count], [6, 2, 2, 0])
+        // A document left as a placeholder has a different name in the new binder; links follow it there.
+        XCTAssertEqual(result.renamed, [
+            BinderRename(from: "2000 Client Financials/2000.01 Trial Balance.xlsx", to: "2000 Client Financials/2000.01 (PLACEHOLDER) Trial Balance.xlsx.txt"),
+            BinderRename(from: "Engagement letter.pdf", to: "(PLACEHOLDER) Engagement letter.pdf.txt"),
+        ])
         func there(_ dir: String = "") -> [String] {
             ((try? FileManager.default.contentsOfDirectory(atPath: dest.appendingPathComponent(dir).path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
         }
         // The folders, with their index numbers; no trial balance, no backups, nothing that was skipped.
-        XCTAssertEqual(there(), ["0000 Binder Notes", "2000 Client Financials", "5000 Permanent Files", "Engagement letter.pdf (placeholder).txt"])
-        XCTAssertEqual(there("2000 Client Financials"), ["2000.01 Trial Balance.xlsx (placeholder).txt", "2000.02 GL.xlsx"])
+        XCTAssertEqual(there(), ["(PLACEHOLDER) Engagement letter.pdf.txt", "0000 Binder Notes", "2000 Client Financials", "5000 Permanent Files"])
+        XCTAssertEqual(there("2000 Client Financials"), ["2000.01 (PLACEHOLDER) Trial Balance.xlsx.txt", "2000.02 GL.xlsx"])
         XCTAssertEqual(there("5000 Permanent Files"), ["5010 PY Tax Returns", "5020 Entity Formation Documents", "Scans"])
         XCTAssertEqual(there("5000 Permanent Files/5020 Entity Formation Documents"), ["5020.01 Partners.xlsx"])
         // A placeholder is empty but for where last year's file is, and keeps the index.
-        let placeholder = dest.appendingPathComponent("2000 Client Financials/2000.01 Trial Balance.xlsx (placeholder).txt")
+        let placeholder = dest.appendingPathComponent("2000 Client Financials/2000.01 (PLACEHOLDER) Trial Balance.xlsx.txt")
         XCTAssertEqual(try String(contentsOf: placeholder, encoding: .utf8), root.appendingPathComponent("2000 Client Financials/2000.01 Trial Balance.xlsx").path + "\n")
         // A copied file comes without its Finder tags; the original keeps them.
         let copied = dest.appendingPathComponent("2000 Client Financials/2000.02 GL.xlsx")
@@ -238,18 +243,220 @@ final class BinderTests: XCTestCase {
 
         // The new binder reads as one: indexed, with its placeholders known as such.
         let next = BinderScanner.scan(dest)
-        XCTAssertEqual(next.item("2000 Client Financials/2000.01 Trial Balance.xlsx (placeholder).txt")?.index?.text, "2000.01")
+        XCTAssertEqual(next.item("2000 Client Financials/2000.01 (PLACEHOLDER) Trial Balance.xlsx.txt")?.index?.text, "2000.01")
         XCTAssertEqual(next.files.filter(\.isPlaceholder).count, 2)
         XCTAssertEqual(next.item("2000 Client Financials/2000.02 GL.xlsx")?.tags, [])
         // Rolled again, a stand-in that was never replaced stays one (not "placeholder (placeholder)") and
         // remembers where the real document last was. Running a roll twice never overwrites.
-        XCTAssertEqual(BinderRoller.defaultChoices(next)["2000 Client Financials/2000.01 Trial Balance.xlsx (placeholder).txt"], .placeholder)
+        XCTAssertEqual(BinderRoller.defaultChoices(next)["2000 Client Financials/2000.01 (PLACEHOLDER) Trial Balance.xlsx.txt"], .placeholder)
         let third = BinderRoller.defaultDestination(for: dest, fromYear: 2027, toYear: 2028)
         try BinderRoller.roll(next, to: third, choices: BinderRoller.defaultChoices(next))
-        let carried = try String(contentsOf: third.appendingPathComponent("2000 Client Financials/2000.01 Trial Balance.xlsx (placeholder).txt"), encoding: .utf8)
+        let carried = try String(contentsOf: third.appendingPathComponent("2000 Client Financials/2000.01 (PLACEHOLDER) Trial Balance.xlsx.txt"), encoding: .utf8)
         XCTAssertEqual(carried.split(separator: "\n").map(String.init), [placeholder.path, root.appendingPathComponent("2000 Client Financials/2000.01 Trial Balance.xlsx").path])
         let again = try BinderRoller.roll(next, to: third, choices: BinderRoller.defaultChoices(next))
         XCTAssertEqual(again.copied + again.placeholders + again.folders, 0)
         XCTAssertEqual(again.alreadyThere.count, 4)
+    }
+
+    func testPlaceholderNames() throws {
+        // The index stays in front, then the marker, then the document's own name.
+        XCTAssertEqual(BinderPlaceholder.name(for: "4000.03 BANK STATEMENT - SSG MM Stmt.pdf"), "4000.03 (PLACEHOLDER) BANK STATEMENT - SSG MM Stmt.pdf.txt")
+        XCTAssertEqual(BinderPlaceholder.name(for: "Engagement letter.pdf"), "(PLACEHOLDER) Engagement letter.pdf.txt")
+        // A placeholder keeps its name; one named the way versions before 1.5 named them takes the present form.
+        XCTAssertEqual(BinderPlaceholder.name(for: "4000.03 (PLACEHOLDER) Stmt.pdf.txt"), "4000.03 (PLACEHOLDER) Stmt.pdf.txt")
+        XCTAssertEqual(BinderPlaceholder.name(for: "4000.03 Stmt.pdf (placeholder).txt"), "4000.03 (PLACEHOLDER) Stmt.pdf.txt")
+        XCTAssertTrue(BinderPlaceholder.isPlaceholder("4000.03 (PLACEHOLDER) Stmt.pdf.txt"))
+        XCTAssertTrue(BinderPlaceholder.isPlaceholder("(PLACEHOLDER) Stmt.pdf.txt"))
+        XCTAssertTrue(BinderPlaceholder.isPlaceholder("4000.03 Stmt.pdf (placeholder).txt"))
+        XCTAssertFalse(BinderPlaceholder.isPlaceholder("4000.03 Stmt.pdf"))
+        XCTAssertFalse(BinderPlaceholder.isPlaceholder("4000.03 (PLACEHOLDER) Stmt.pdf"))
+        XCTAssertFalse(BinderPlaceholder.isPlaceholder("4000.03 Notes on the (PLACEHOLDER) files.txt"))
+
+        try make("4000 Support/4000.01 (PLACEHOLDER) Organizer.pdf.txt")
+        try make("4000 Support/4000.02 K-1.pdf (placeholder).txt", "/last/year/K-1.pdf\n")
+        let tree = BinderScanner.scan(root)
+        let new = try XCTUnwrap(tree.item("4000 Support/4000.01 (PLACEHOLDER) Organizer.pdf.txt"))
+        XCTAssertTrue(new.isPlaceholder)
+        XCTAssertEqual(new.index?.text, "4000.01")
+        XCTAssertEqual(new.displayTitle, "Organizer.pdf")
+        XCTAssertEqual(tree.item("4000 Support/4000.02 K-1.pdf (placeholder).txt")?.displayTitle, "K-1.pdf")
+        // Rolled forward, both stay placeholders, the older one under the present name.
+        let dest = BinderRoller.defaultDestination(for: root, fromYear: 2026, toYear: 2027)
+        let result = try BinderRoller.roll(tree, to: dest, choices: BinderRoller.defaultChoices(tree))
+        XCTAssertEqual(result.placeholders, 2)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dest.appendingPathComponent("4000 Support").path).sorted(),
+                       ["4000.01 (PLACEHOLDER) Organizer.pdf.txt", "4000.02 (PLACEHOLDER) K-1.pdf.txt"])
+        XCTAssertEqual(result.renamed, [BinderRename(from: "4000 Support/4000.02 K-1.pdf (placeholder).txt", to: "4000 Support/4000.02 (PLACEHOLDER) K-1.pdf.txt")])
+    }
+
+    // MARK: Dragging
+
+    /// Five files in 4000 Support (01–03, 05, one unindexed) and the usual others.
+    func dragBinder() throws -> BinderTree {
+        try make("2000 Client Financials/2000.01 TB.xlsx")
+        try make("2000 Client Financials/2000.02 GL.xlsx")
+        try make("4000 Support/4000.01 A.pdf")
+        try make("4000 Support/4000.02 B.pdf")
+        try make("4000 Support/4000.03 C.pdf")
+        try make("4000 Support/4000.05 E.pdf")
+        try make("4000 Support/Loose.pdf")
+        try make("5000 Permanent Files/")
+        return BinderScanner.scan(root)
+    }
+
+    func pairs(_ renames: [BinderRename]) -> [String] {
+        renames.map { "\(($0.from as NSString).lastPathComponent) > \($0.to)" }.sorted()
+    }
+
+    func testDraggingWithinAFolderRenumbersOnlyWhatLiesBetween() throws {
+        let tree = try dragBinder()
+        let a = "4000 Support/4000.01 A.pdf", b = "4000 Support/4000.02 B.pdf", c = "4000 Support/4000.03 C.pdf", e = "4000 Support/4000.05 E.pdf"
+        // A below C: B and C move up a place, A takes C's number. E, past the gap, is left alone.
+        XCTAssertEqual(pairs(BinderIndexer.move(a, .after(c), in: tree)),
+                       ["4000.01 A.pdf > 4000 Support/4000.03 A.pdf", "4000.02 B.pdf > 4000 Support/4000.01 B.pdf", "4000.03 C.pdf > 4000 Support/4000.02 C.pdf"])
+        // Above E is the same place as below C.
+        XCTAssertEqual(BinderIndexer.move(a, .before(e), in: tree), BinderIndexer.move(a, .after(c), in: tree))
+        // E above A: everything before it moves down one; the run keeps the numbers 01, 02, 03, 05.
+        XCTAssertEqual(pairs(BinderIndexer.move(e, .before(a), in: tree)),
+                       ["4000.01 A.pdf > 4000 Support/4000.02 A.pdf", "4000.02 B.pdf > 4000 Support/4000.03 B.pdf",
+                        "4000.03 C.pdf > 4000 Support/4000.05 C.pdf", "4000.05 E.pdf > 4000 Support/4000.01 E.pdf"])
+        // Let go where it already is: nothing to do.
+        XCTAssertEqual(BinderIndexer.move(b, .after(a), in: tree), [])
+        XCTAssertEqual(BinderIndexer.move(b, .before(c), in: tree), [])
+        XCTAssertEqual(BinderIndexer.move(b, .onto(b), in: tree), [])
+
+        try BinderFileOps.apply(BinderIndexer.move(a, .after(c), in: tree), root: root)
+        XCTAssertEqual(names("4000 Support"), ["4000.01 B.pdf", "4000.02 C.pdf", "4000.03 A.pdf", "4000.05 E.pdf", "Loose.pdf"])
+        XCTAssertTrue(BinderScanner.scan(root).duplicateIndexes.isEmpty)
+    }
+
+    func testDraggingInFromElsewhereMakesRoom() throws {
+        let tree = try dragBinder()
+        let gl = "2000 Client Financials/2000.02 GL.xlsx", loose = "4000 Support/Loose.pdf"
+        // From another folder, above B: it becomes 4000.02; B and C move up; E, past the gap, stays.
+        XCTAssertEqual(pairs(BinderIndexer.move(gl, .before("4000 Support/4000.02 B.pdf"), in: tree)),
+                       ["2000.02 GL.xlsx > 4000 Support/4000.02 GL.xlsx", "4000.02 B.pdf > 4000 Support/4000.03 B.pdf", "4000.03 C.pdf > 4000 Support/4000.04 C.pdf"])
+        // An unindexed file below C takes the free 04: nothing else moves.
+        XCTAssertEqual(pairs(BinderIndexer.move(loose, .after("4000 Support/4000.03 C.pdf"), in: tree)), ["Loose.pdf > 4000 Support/4000.04 Loose.pdf"])
+        // Below the last file.
+        XCTAssertEqual(pairs(BinderIndexer.move(gl, .after("4000 Support/4000.05 E.pdf"), in: tree)), ["2000.02 GL.xlsx > 4000 Support/4000.06 GL.xlsx"])
+        // Onto a folder: filed there with its next index. A folder with no files starts at 01.
+        XCTAssertEqual(pairs(BinderIndexer.move(gl, .onto("4000 Support"), in: tree)), ["2000.02 GL.xlsx > 4000 Support/4000.06 GL.xlsx"])
+        XCTAssertEqual(pairs(BinderIndexer.move(gl, .onto("5000 Permanent Files"), in: tree)), ["2000.02 GL.xlsx > 5000 Permanent Files/5000.01 GL.xlsx"])
+        XCTAssertEqual(BinderIndexer.move(gl, .onto("2000 Client Financials"), in: tree), [])
+        // Beside a file with no index there is no number to take: it is filed with the folder's next one.
+        XCTAssertEqual(pairs(BinderIndexer.move(gl, .before(loose), in: tree)), ["2000.02 GL.xlsx > 4000 Support/4000.06 GL.xlsx"])
+        // Folders aren't dragged.
+        XCTAssertEqual(BinderIndexer.move("4000 Support", .onto("5000 Permanent Files"), in: tree), [])
+
+        let renames = BinderIndexer.move(gl, .before("4000 Support/4000.02 B.pdf"), in: tree)
+        try BinderFileOps.apply(renames, root: root)
+        XCTAssertEqual(names("4000 Support"), ["4000.01 A.pdf", "4000.02 GL.xlsx", "4000.03 B.pdf", "4000.04 C.pdf", "4000.05 E.pdf", "Loose.pdf"])
+        XCTAssertEqual(names("2000 Client Financials"), ["2000.01 TB.xlsx"])
+        XCTAssertTrue(BinderScanner.scan(root).duplicateIndexes.isEmpty)
+    }
+
+    func testDroppingOntoAFileTakesItsIndex() throws {
+        let tree = try dragBinder()
+        let gl = "2000 Client Financials/2000.02 GL.xlsx", b = "4000 Support/4000.02 B.pdf"
+        // The file dropped takes the number and the place; the file that had it stays, with no index.
+        XCTAssertEqual(pairs(BinderIndexer.move(gl, .onto(b), in: tree)), ["2000.02 GL.xlsx > 4000 Support/4000.02 GL.xlsx", "4000.02 B.pdf > 4000 Support/B.pdf"])
+        XCTAssertEqual(pairs(BinderIndexer.move("4000 Support/4000.01 A.pdf", .onto(b), in: tree)), ["4000.01 A.pdf > 4000 Support/4000.02 A.pdf", "4000.02 B.pdf > 4000 Support/B.pdf"])
+        try BinderFileOps.apply(BinderIndexer.move(gl, .onto(b), in: tree), root: root)
+        let after = BinderScanner.scan(root)
+        XCTAssertEqual(names("4000 Support"), ["4000.01 A.pdf", "4000.02 GL.xlsx", "4000.03 C.pdf", "4000.05 E.pdf", "B.pdf", "Loose.pdf"])
+        XCTAssertNil(after.item("4000 Support/B.pdf")?.index)
+        XCTAssertTrue(after.duplicateIndexes.isEmpty)
+
+        // Journal entry links and sign-offs follow a drag.
+        var e = Engagement(name: "Summit Storage", periodEnd: "2026-12-31")
+        var je = JournalEntry(number: "AJE-1", type: .adjusting, date: "2026-12-31")
+        je.references = [FileReference(path: gl, sheet: "GL", cells: "B4:D10"), FileReference(path: b)]
+        e.journalEntries = [je]
+        e.setSignOff(.prepared, for: b, by: Actor(name: "Jordan Avery", account: "javery", computer: "Mac", device: "D1"), fileHash: "h")
+        e.relink(after: BinderIndexer.move(gl, .onto(b), in: tree))
+        XCTAssertEqual(e.journalEntries[0].references.map(\.path), ["4000 Support/4000.02 GL.xlsx", "4000 Support/B.pdf"])
+        XCTAssertEqual(e.journalEntries[0].references[0].location, "'GL'!B4:D10")
+        XCTAssertEqual(e.signOffs.map(\.path), ["4000 Support/B.pdf"])
+    }
+
+    func testPlacingNewFilesInAFolder() throws {
+        let tree = try dragBinder()
+        let next = try XCTUnwrap(BinderIndexer.nextFileIndex(in: "4000 Support", tree: tree))
+        XCTAssertEqual(next.text, "4000.06")
+        // The default: the folder's next numbers, in the order given. A number a file arrives with is dropped.
+        var plan = BinderIndexer.place(["Statement.pdf", "2000.09 Old index.pdf"], at: next, in: tree)
+        XCTAssertEqual(plan.names, ["4000.06 Statement.pdf", "4000.07 Old index.pdf"])
+        XCTAssertEqual(plan.renames, [])
+        // A number of your choosing: what is there, and what follows without a gap, moves up past the new files.
+        plan = BinderIndexer.place(["X.pdf", "Y.pdf"], at: BinderIndex(typed: "4000.02", isFolder: false), in: tree)
+        XCTAssertEqual(plan.names, ["4000.02 X.pdf", "4000.03 Y.pdf"])
+        XCTAssertEqual(pairs(plan.renames), ["4000.02 B.pdf > 4000 Support/4000.04 B.pdf", "4000.03 C.pdf > 4000 Support/4000.05 C.pdf", "4000.05 E.pdf > 4000 Support/4000.06 E.pdf"])
+        plan = BinderIndexer.place(["X.pdf"], at: BinderIndex(typed: "4000.04", isFolder: false), in: tree)
+        XCTAssertEqual(plan.names, ["4000.04 X.pdf"])
+        XCTAssertEqual(plan.renames, [])
+        // No index.
+        plan = BinderIndexer.place(["X.pdf"], at: nil, in: tree)
+        XCTAssertEqual(plan.names, ["X.pdf"])
+        XCTAssertEqual(plan.renames, [])
+    }
+
+    func testEveryIndexedFileInIndexOrder() throws {
+        try make("4000 Support/4000.10 Ten.pdf")
+        try make("4000 Support/4000.02 Two.pdf")
+        try make("5000 Permanent Files/5010 PY Tax Returns/5010.01 Return.pdf")
+        try make("2000 Client Financials/2000.01 TB.xlsx")
+        try make("2000 Client Financials/Loose.pdf")
+        try make("0000 Binder Notes/0000.01 Notes.docx")
+        // Whatever folder they are in, and by number, not by spelling (10 after 2).
+        XCTAssertEqual(BinderScanner.scan(root).indexedFiles.map(\.name),
+                       ["0000.01 Notes.docx", "2000.01 TB.xlsx", "4000.02 Two.pdf", "4000.10 Ten.pdf", "5010.01 Return.pdf"])
+    }
+
+    // MARK: The folders a new binder starts with
+
+    func testStandardBinderLayout() throws {
+        let layout = BinderLayout.standard
+        XCTAssertEqual(layout.paths, [
+            "0000 Binder Notes", "2000 Client Financials", "3000 Standard Workpapers", "3050 Additional Workpapers", "4000 Support",
+            "5000 Permanent Files", "5000 Permanent Files/5010 PY Tax Returns", "5000 Permanent Files/5020 Entity Formation Documents",
+            "5000 Permanent Files/5030 Tax Resolution & Notices",
+        ])
+        XCTAssertEqual(layout.problems(), [])
+        // The outline is what the settings screen edits, and it reads back the same.
+        XCTAssertEqual(BinderLayout(outline: layout.outline), layout)
+        XCTAssertTrue(layout.outline.contains("5000 Permanent Files\n    5010 PY Tax Returns"))
+        // Tabs indent too; blank lines are ignored; a line can't sit two levels under the one before.
+        let typed = BinderLayout(outline: "1000 A\n\t1010 B\n\t\t1011 C\n\n2000 D\n            2010 E\n")
+        XCTAssertEqual(typed.paths, ["1000 A", "1000 A/1010 B", "1000 A/1010 B/1011 C", "2000 D", "2000 D/2010 E"])
+        XCTAssertEqual(BinderLayout(outline: "1000 A\n1000 B\n1000 A\nBad/Name").problems().count, 4)
+
+        XCTAssertEqual(try layout.create(in: root), 9)
+        XCTAssertEqual(names(), ["0000 Binder Notes", "2000 Client Financials", "3000 Standard Workpapers", "3050 Additional Workpapers", "4000 Support", "5000 Permanent Files"])
+        XCTAssertEqual(names("5000 Permanent Files"), ["5010 PY Tax Returns", "5020 Entity Formation Documents", "5030 Tax Resolution & Notices"])
+        // What is already there is left alone.
+        try make("4000 Support/4000.01 Organizer.pdf")
+        XCTAssertEqual(try layout.create(in: root), 0)
+        XCTAssertEqual(names("4000 Support"), ["4000.01 Organizer.pdf"])
+        // The new binder reads as one, with nothing to flag.
+        let tree = BinderScanner.scan(root)
+        XCTAssertEqual(tree.folders.count, 9)
+        XCTAssertTrue(tree.unindexed.isEmpty && tree.duplicateIndexes.isEmpty)
+    }
+
+    func testBinderLayoutsByEntityType() throws {
+        let file = root.appendingPathComponent("Binder Layouts.json")
+        // Nothing saved: every entity type gets the built-in layout.
+        var layouts = BinderLayouts.load(from: file)
+        XCTAssertEqual(layouts.layout(forEntityType: "S Corporation (Form 1120-S)"), .standard)
+        XCTAssertEqual(layouts.layout(forEntityType: ""), .standard)
+        // Change the layout for everyone, and give one type its own.
+        layouts.general = BinderLayout(outline: "1000 Financials\n2000 Support")
+        layouts.byEntityType["Nonprofit (Form 990)"] = BinderLayout(outline: "1000 Financials\n2000 Support\n3000 Grants\n    3010 Award Letters")
+        try layouts.save(to: file)
+        let back = BinderLayouts.load(from: file)
+        XCTAssertEqual(back, layouts)
+        XCTAssertEqual(back.layout(forEntityType: "Partnership (Form 1065)").paths, ["1000 Financials", "2000 Support"])
+        XCTAssertEqual(back.layout(forEntityType: "nonprofit (form 990)").paths.last, "3000 Grants/3010 Award Letters")
     }
 }

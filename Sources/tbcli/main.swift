@@ -30,10 +30,19 @@ tbcli — work with a TB Tool trial balance file
                                                            are copied without Finder tags, placeholders stay
                                                            placeholders, nothing there is overwritten
   tbcli check <file.json>                                  list integrity problems
+  tbcli log <file.json>                                    the change log: when, who, on which Mac, what changed
   tbcli summary <file.json>                                balances check and net income
   tbcli export <file.json> <out.xlsx | out.csv>            full workbook, or the long-format data
 
 """
+
+/// Saves, first adding a line to the file's change log that says what this command changed.
+func saveLogged(_ e: Engagement, to url: URL, action: String) throws {
+    var out = e
+    let before = try? Store.load(url)
+    out.log("\(action) (tbcli)", details: before.map { out.changes(since: $0) } ?? [], by: Actor.current())
+    try Store.save(out, to: url)
+}
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -78,8 +87,9 @@ do {
         let url = URL(fileURLWithPath: pos[0])
         guard !FileManager.default.fileExists(atPath: url.path) else { fail("\(url.lastPathComponent) already exists.") }
         let year = Calendar.current.component(.year, from: Date())
-        let e = Engagement(name: option("--name", in: rest) ?? url.deletingPathExtension().lastPathComponent,
+        var e = Engagement(name: option("--name", in: rest) ?? url.deletingPathExtension().lastPathComponent,
                            periodEnd: option("--period", in: rest) ?? "\(year)-12-31")
+        e.log("Created the file (tbcli)", details: [url.lastPathComponent], by: Actor.current())
         try Store.save(e, to: url)
         print("Created \(url.lastPathComponent)")
 
@@ -111,7 +121,7 @@ do {
         let warnings = try priorYear.map { try e.importPriorPeriod(tb, into: id, year: $0, resolving: decisions) }
             ?? e.importTrialBalance(tb, into: id, resolving: decisions)
         if !decisions.isEmpty { renames.forEach { print("  renamed \($0.number): “\($0.chartName)” → “\($0.fileName)”") } }
-        try Store.save(e, to: url)
+        try saveLogged(e, to: url, action: priorYear.map { "Import \($0) Balances" } ?? "Import \(name)")
         let m = result.mapping
         func letter(_ i: Int) -> String {
             var n = i + 1, s = ""
@@ -132,7 +142,7 @@ do {
         var e = try Store.load(url)
         let text = try String(contentsOf: URL(fileURLWithPath: pos[1]), encoding: .utf8)
         let result = e.applyGroupingMap(csv: text)
-        try Store.save(e, to: url)
+        try saveLogged(e, to: url, action: "Map Groupings")
         print("Mapped \(result.applied) accounts")
         result.warnings.forEach { print("  warning: \($0)") }
 
@@ -159,7 +169,7 @@ do {
         o.applyTypes = !rest.contains("--no-types")
         let plan = e.planChartImport(chart, options: o)
         e.applyChartImport(plan)
-        try Store.save(e, to: url)
+        try saveLogged(e, to: url, action: "Import Chart of Accounts")
         print("Matched \(plan.matched) of \(chart.accounts.count) accounts: \(plan.groupingChanges) groupings set, \(plan.typeChanges) types changed, \(plan.added.count) added, \(plan.newGroupings.count) new groupings")
         if !plan.keptExisting.isEmpty { print("  kept \(plan.keptExisting.count) existing groupings (use --overwrite to replace)") }
         if !plan.unmatched.isEmpty { print("  \(plan.unmatched.count) source accounts not in this file (use --add-missing to add)") }
@@ -184,7 +194,7 @@ do {
         let list = try GroupingTransfer.read(url: URL(fileURLWithPath: pos[1]))
         let plan = e.planGroupingImport(list, mode: rest.contains("--merge") ? .merge : .replace)
         e.applyGroupingImport(plan, name: rest.contains("--merge") ? nil : list.name)
-        try Store.save(e, to: url)
+        try saveLogged(e, to: url, action: "Import Grouping List")
         print("\(plan.result.count) groupings: \(plan.added.count) added, \(plan.updated.count) changed, \(plan.removed.count) removed")
         if !plan.ungrouped.isEmpty { print("  \(plan.ungrouped.count) accounts are now ungrouped: \(plan.ungrouped.prefix(10).map(\.id).joined(separator: ", "))") }
 
@@ -202,6 +212,19 @@ do {
             exit(2)
         }
 
+    case "log":
+        guard pos.count == 1 else { fail(usage) }
+        let e = try Store.load(URL(fileURLWithPath: pos[0]))
+        for a in e.auditLog {
+            print("\(a.at)  \(a.action)  — \(a.actor.display), \(a.actor.computer)")
+            a.details.forEach { print("    \($0)") }
+        }
+        if let broken = e.auditLogBreak {
+            print("Line \(broken + 1) doesn't follow from the line before it: the log was changed outside TB Tool.")
+            exit(2)
+        }
+        print("\(e.auditLog.count) line\(e.auditLog.count == 1 ? "" : "s"); the log is unbroken.")
+
     case "rollforward":
         guard pos.count == 2 else { fail(usage) }
         let url = URL(fileURLWithPath: pos[0]), dest = URL(fileURLWithPath: pos[1])
@@ -210,15 +233,18 @@ do {
         let e = try Store.load(url)
         var o = RollForwardOptions()
         o.sourceName = url.lastPathComponent
+        o.actor = Actor.current()
         if let equity = option("--carry-balance-sheet", in: rest) {
             guard let account = e.resolveAccount(equity) else { fail("No account “\(equity)” in the chart.") }
             o.opening = .carryBalanceSheet(closeInto: account.id)
         }
         let summary = try e.rollForwardSummary()
-        let next = try e.rolledForward(o)
+        var next = try e.rolledForward(o)
         if rest.contains("--binder") {
             let tree = BinderScanner.scan(url.deletingLastPathComponent())
             let r = try BinderRoller.roll(tree, to: dest.deletingLastPathComponent(), choices: BinderRoller.defaultChoices(tree))
+            next.relink(after: r.renamed)
+            next.log("Binder rolled forward (tbcli)", details: ["\(r.folders) folders created, \(r.copied) files copied, \(r.placeholders) placeholders left"], by: Actor.current())
             print("Binder: \(r.folders) folders created, \(r.copied) files rolled forward, \(r.placeholders) placeholders" + (r.alreadyThere.isEmpty ? "" : ", \(r.alreadyThere.count) already there and left alone"))
         } else {
             try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -241,7 +267,7 @@ do {
             }
         }
         try e.post(entry)
-        try Store.save(e, to: url)
+        try saveLogged(e, to: url, action: "Post \(entry.number)")
         print("Posted \(entry.number): debits \(entry.totalDebits.grouped), credits \(entry.totalCredits.grouped)")
 
     case "check":
@@ -257,6 +283,9 @@ do {
             if !tree.unindexed.isEmpty { binderNotes.append("Binder: \(tree.unindexed.count) item(s) with no index: \(tree.unindexed.prefix(5).map(\.path).joined(separator: ", "))") }
             for d in tree.duplicateIndexes { binderNotes.append("Binder: index \(d.index) is used by \(d.items.count) items") }
         }
+        let noActivity = checked.entities.filter { $0.activityNumber.trimmingCharacters(in: .whitespaces).isEmpty }
+        if !noActivity.isEmpty { binderNotes.append("\(noActivity.count) trial balance(s) with no activity number: \(noActivity.map(\.name).joined(separator: ", "))") }
+        if let broken = checked.auditLogBreak { binderNotes.append("Change log: line \(broken + 1) doesn't follow from the line before it — the log was changed outside TB Tool.") }
         // Not a fault in the file, but work left to do: say so either way.
         let ungrouped = checked.ungroupedAccounts
         let note = ungrouped.isEmpty ? nil

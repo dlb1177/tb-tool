@@ -11,6 +11,7 @@ enum SidebarItem: Hashable {
     case groupings
     case reports
     case binder
+    case changeLog
 }
 
 struct AlertInfo: Identifiable {
@@ -100,6 +101,23 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Signed-off workpapers whose file has changed since, or has gone: "path␟level".
+    @Published private(set) var staleSignOffs: Set<String> = []
+    @Published private(set) var missingSignOffs: Set<String> = []
+    /// Binder folders shown closed, by path.
+    @Published var collapsedFolders: Set<String> = [] {
+        didSet { if let folder, collapsedFolders != oldValue { UserDefaults.standard.set(collapsedFolders.sorted(), forKey: "binder.collapsed." + folder.path) } }
+    }
+    private var fingerprints: [String: (date: Date?, size: Int, hash: String)] = [:]
+    private var sheetCache: [String: (date: Date?, names: [String]?)] = [:]
+
+    /// The person at this Mac. Their name, login, this Mac's name and its hardware identifier go
+    /// with every line of the change log and every sign-off. (Pictures for the manual are taken
+    /// as a made-up person.)
+    private(set) lazy var actor: Actor = CommandLine.arguments.contains("--tb-snapshot")
+        ? Actor(name: "Jordan Avery", account: "javery", computer: "Jordan’s MacBook Pro", device: "00000000-0000-4000-8000-000000000001")
+        : Actor.current()
+
     weak var undoManager: UndoManager?
     /// Set while taking automated screenshots, so nothing opens a panel or Finder.
     var quiet = false
@@ -173,6 +191,8 @@ final class AppModel: ObservableObject {
             diskDate = modificationDate(url)
             sessionBackedUp = false
             undoManager?.removeAllActions()
+            fingerprints = [:]
+            collapsedFolders = Set(UserDefaults.standard.stringArray(forKey: "binder.collapsed." + url.deletingLastPathComponent().path) ?? [])
             set(e)
             refreshBinder()
             selection = .consolidated
@@ -193,14 +213,16 @@ final class AppModel: ObservableObject {
 
     /// New files start with a setup window: client and binder details, the current year, and the grouping list.
     func newFilePanel() {
-        Windows.shared.show("setup", title: "New Trial Balance File", size: NSSize(width: 620, height: 780), minSize: NSSize(width: 560, height: 520)) {
+        Windows.shared.show("setup", title: "New Trial Balance File", size: NSSize(width: 620, height: 840), minSize: NSSize(width: 560, height: 520)) {
             SettingsView(mode: .setup)
         }
     }
 
     /// Asks where the new file goes (the last place a trial balance was opened, by default) and creates it.
+    /// With `makeFolders`, the binder layout for the file's entity type is laid out beside it,
+    /// unless the folder already has folders of its own or is a general one like the Desktop.
     @discardableResult
-    func createFile(_ e: Engagement) -> Bool {
+    func createFile(_ e: Engagement, makeFolders: Bool = false) -> Bool {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.directoryURL = folder
@@ -210,12 +232,43 @@ final class AppModel: ObservableObject {
         panel.prompt = "Create"
         guard panel.runModal() == .OK, let url = panel.url else { return false }
         do {
-            try Store.save(e, to: url)
+            var new = e
+            var notes = ["\(url.lastPathComponent)"]
+            var made = 0
+            var skipped = ""
+            let dir = url.deletingLastPathComponent()
+            if makeFolders {
+                if !BinderScanner.isLikelyBinder(dir) {
+                    skipped = "The binder folders weren't made: \(dir.lastPathComponent) is a general folder, not a client's binder."
+                } else if !BinderScanner.scan(dir).folders.isEmpty {
+                    skipped = "The binder folders weren't made: \(dir.lastPathComponent) already has folders in it."
+                } else {
+                    made = try BinderLayouts.load().layout(forEntityType: e.binder.entityType).create(in: dir)
+                    notes.append("Binder folders made from the standard layout: \(made)")
+                }
+            }
+            new.log("Created the file", details: notes, by: actor)
+            try Store.save(new, to: url)
             open(url)
+            if made > 0 { status = "Created \(url.lastPathComponent) and \(made) binder folder\(made == 1 ? "" : "s")" }
+            if !skipped.isEmpty { status = skipped }
             return true
         } catch {
             alert = AlertInfo(title: "Couldn't create the file", message: error.localizedDescription)
             return false
+        }
+    }
+
+    /// Lays the standard binder folders out in a binder that has none yet.
+    func createBinderFolders() {
+        guard let folder, let e = engagement, BinderScanner.isLikelyBinder(folder) else { return }
+        do {
+            let made = try BinderLayouts.load().layout(forEntityType: e.binder.entityType).create(in: folder)
+            record("Create Binder Folders", ["\(made) folder\(made == 1 ? "" : "s") made from the standard layout"])
+            refreshBinder()
+            status = "Made \(made) binder folder\(made == 1 ? "" : "s")"
+        } catch {
+            alert = AlertInfo(title: "Couldn't make the folders", message: error.localizedDescription)
         }
     }
 
@@ -228,6 +281,8 @@ final class AppModel: ObservableObject {
         issues = []
         brokenLinks = []
         binder = nil
+        staleSignOffs = []
+        missingSignOffs = []
         undoManager?.removeAllActions()
         UserDefaults.standard.removeObject(forKey: "lastFile")
         refreshCandidates()
@@ -246,13 +301,15 @@ final class AppModel: ObservableObject {
         issues = e.issues()
         rebuildLive()
         refreshLinks()
+        refreshSignOffs()
     }
 
     // MARK: Changing
 
     /// Applies a change. Returns false (and shows why) if the change was rejected; nothing is written in that case.
+    /// `notes` are extra lines for the change log, ahead of what the change itself did.
     @discardableResult
-    func mutate(_ actionName: String, _ body: (inout Engagement) throws -> Void) -> Bool {
+    func mutate(_ actionName: String, notes: [String] = [], _ body: (inout Engagement) throws -> Void) -> Bool {
         guard var e = engagement else { return false }
         let old = e
         do {
@@ -261,17 +318,33 @@ final class AppModel: ObservableObject {
             alert = AlertInfo(title: "\(actionName) didn't go through", message: error.localizedDescription)
             return false
         }
-        if e != old { apply(e, previous: old, actionName: actionName) }
+        if e != old { apply(e, previous: old, actionName: actionName, notes: notes) }
         return true
     }
 
-    private func apply(_ new: Engagement, previous: Engagement, actionName: String) {
-        set(new)
+    private func apply(_ new: Engagement, previous: Engagement, actionName: String, how: String = "", notes: [String] = []) {
+        commit(new, action: how.isEmpty ? actionName : "\(how): \(actionName)", notes: notes)
         undoManager?.registerUndo(withTarget: self) { model in
-            model.apply(previous, previous: new, actionName: actionName)
+            model.apply(previous, previous: new, actionName: actionName, how: model.undoManager?.isUndoing == true ? "Undo" : "Redo")
         }
         undoManager?.setActionName(actionName)
+    }
+
+    /// Makes `new` the state of the file, adds a line to the change log saying what changed, and
+    /// saves. The log only ever grows: undoing a change doesn't remove its line, it adds one.
+    private func commit(_ new: Engagement, action: String, notes: [String] = []) {
+        var state = new
+        let current = engagement
+        state.auditLog = current?.auditLog ?? new.auditLog
+        state.log(action, details: notes + (current.map { state.changes(since: $0) } ?? []), by: actor)
+        set(state)
         save()
+    }
+
+    /// Adds a line to the change log for something that changed the binder folder but nothing in the file.
+    func record(_ action: String, _ details: [String]) {
+        guard let e = engagement else { return }
+        commit(e, action: action, notes: details)
     }
 
     private func save() {
@@ -302,10 +375,17 @@ final class AppModel: ObservableObject {
               onDisk != diskDate, onDisk != unreadableDiskDate else { return }
         do {
             let e = try Store.load(url)
+            let before = engagement
             self.diskDate = onDisk
             undoManager?.removeAllActions()
             set(e)
             status = "Reloaded — \(url.lastPathComponent) was changed outside the app."
+            // Whatever changed the file didn't write to the change log (the command-line tool does):
+            // note here what is different, so the log has no silent gap.
+            if let before, before.auditLog == e.auditLog {
+                let changes = e.changes(since: before)
+                if !changes.isEmpty { commit(e, action: "Changed outside TB Tool", notes: ["Noticed when the file was read again. What is different:"]) }
+            }
         } catch {
             // Leave diskDate alone: the next save then sees the mismatch and backs the outside version up first.
             unreadableDiskDate = onDisk
@@ -365,8 +445,9 @@ final class AppModel: ObservableObject {
         do {
             var o = options
             o.sourceName = url.lastPathComponent
+            o.actor = actor
             let summary = try e.rollForwardSummary()
-            let next = try e.rolledForward(o)
+            var next = try e.rolledForward(o)
             var dest = destination
             if let dest, FileManager.default.fileExists(atPath: dest.path) {
                 throw TBError("\(dest.lastPathComponent) is already in \(dest.deletingLastPathComponent().lastPathComponent). Choose another folder, or move that file first.")
@@ -389,6 +470,13 @@ final class AppModel: ObservableObject {
             var rolled: BinderRollResult?
             if let binderChoices, let binder {
                 rolled = try BinderRoller.roll(binder, to: dest.deletingLastPathComponent(), choices: binderChoices)
+                if let r = rolled {
+                    // Links that roll forward follow a document that became a placeholder.
+                    next.relink(after: r.renamed)
+                    next.log("Binder rolled forward", details: [
+                        "\(r.folders) folder\(r.folders == 1 ? "" : "s") created, \(r.copied) file\(r.copied == 1 ? "" : "s") copied, \(r.placeholders) placeholder\(r.placeholders == 1 ? "" : "s") left",
+                    ] + (r.alreadyThere.isEmpty ? [] : ["\(r.alreadyThere.count) already there and left alone"]), by: actor)
+                }
             }
             try Store.save(next, to: dest)
             status = "Rolled forward to \(dest.lastPathComponent)"
@@ -721,30 +809,35 @@ final class AppModel: ObservableObject {
 
     // MARK: Linked files
 
-    func chooseFilesToLink() -> [FileReference] {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        panel.directoryURL = folder
-        panel.message = "Choose the workpaper(s) this entry refers to"
-        panel.prompt = "Link"
-        guard panel.runModal() == .OK else { return [] }
-        return panel.urls.map { FileReference(file: $0, engagementFolder: folder) }
-    }
-
     func url(for reference: FileReference) -> URL { reference.url(engagementFolder: folder) }
 
     func exists(_ reference: FileReference) -> Bool {
         FileManager.default.fileExists(atPath: url(for: reference).path)
     }
 
+    /// Opens a linked file. A workbook opens in Excel on the tab the link names, with its cells
+    /// selected if it names any.
     func openReference(_ reference: FileReference) {
         let target = url(for: reference)
-        if FileManager.default.fileExists(atPath: target.path) {
-            NSWorkspace.shared.open(target)
-        } else {
-            alert = AlertInfo(title: "File not found", message: "\(target.path)\n\nIt may have been moved or renamed. Use Locate… to point the link at where it is now.")
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            alert = AlertInfo(title: "File not found", message: "\(target.path)\n\nIt may have been moved or renamed. Choose it again from the binder, or use Fix Broken File Links.")
+            return
         }
+        if reference.isWorkbook, !reference.sheet.isEmpty, ExcelOpener.open(target, sheet: reference.sheet, cells: reference.cells, report: { [weak self] message in
+            self?.status = message
+        }) { return }
+        NSWorkspace.shared.open(target)
+    }
+
+    /// The tabs of a workbook a link points at, read once per version of the file.
+    func sheetNames(for reference: FileReference) -> [String]? {
+        guard reference.isWorkbook else { return nil }
+        let target = url(for: reference)
+        let stamp = modificationDate(target)
+        if let cached = sheetCache[target.path], cached.date == stamp { return cached.names }
+        let names = WorkbookTabs.names(of: target)
+        sheetCache[target.path] = (stamp, names)
+        return names
     }
 
     func reveal(_ url: URL) {
@@ -762,9 +855,11 @@ final class AppModel: ObservableObject {
         }
         let tree = BinderScanner.scan(folder)
         if tree != binder { binder = tree }
+        refreshSignOffs()
     }
 
-    /// How many things in the binder need attention: loose files, items with no index, shared indexes.
+    /// How many things in the binder need attention: loose files, items with no index, shared
+    /// indexes, and workpapers that changed or went missing after they were signed off.
     var binderAlerts: [String] {
         guard let b = binder, !b.truncated else { return [] }
         var out: [String] = []
@@ -772,14 +867,21 @@ final class AppModel: ObservableObject {
         if unfiled > 0 { out.append("\(unfiled) file\(unfiled == 1 ? " sits" : "s sit") loose beside the trial balance. File \(unfiled == 1 ? "it" : "them") in one of the binder's folders.") }
         if unindexed > 0 { out.append("\(unindexed) binder item\(unindexed == 1 ? " has" : "s have") no index.") }
         if shared > 0 { out.append("\(shared) index number\(shared == 1 ? " is" : "s are") used more than once (\(b.duplicateIndexes.prefix(3).map(\.index).joined(separator: ", "))).") }
+        let stale = Set(staleSignOffs.map { $0.components(separatedBy: "\u{1F}")[0] }).count
+        let missing = Set(missingSignOffs.map { $0.components(separatedBy: "\u{1F}")[0] }).count
+        if stale > 0 { out.append("\(stale) workpaper\(stale == 1 ? " has" : "s have") changed since \(stale == 1 ? "it was" : "they were") signed off.") }
+        if missing > 0 { out.append("\(missing) signed-off workpaper\(missing == 1 ? "" : "s") can't be found in the binder.") }
         return out
     }
 
-    /// Renames or moves binder items on disk and keeps journal entries' linked files pointing at
-    /// them. One step, and ⌘Z puts the names back.
+    /// Trial balances with no activity number yet.
+    var missingActivity: [Entity] { engagement?.entities.filter { $0.activityNumber.trimmingCharacters(in: .whitespaces).isEmpty } ?? [] }
+
+    /// Renames or moves binder items on disk and keeps journal entries' linked files and the
+    /// sign-offs pointing at them. One step, logged, and ⌘Z puts the names back.
     @discardableResult
-    func applyBinderRenames(_ renames: [BinderRename], actionName: String) -> Bool {
-        guard let folder, !renames.isEmpty else { return false }
+    func applyBinderRenames(_ renames: [BinderRename], actionName: String, how: String = "", notes: [String] = []) -> Bool {
+        guard let folder, !renames.isEmpty, var e = engagement else { return false }
         do {
             try BinderFileOps.apply(renames, root: folder)
         } catch {
@@ -789,14 +891,206 @@ final class AppModel: ObservableObject {
         }
         let reversed = renames.map { BinderRename(from: $0.to, to: $0.from, isFolder: $0.isFolder) }
         undoManager?.registerUndo(withTarget: self) { model in
-            model.applyBinderRenames(reversed, actionName: actionName)
+            model.applyBinderRenames(reversed, actionName: actionName, how: model.undoManager?.isUndoing == true ? "Undo" : "Redo")
         }
         undoManager?.setActionName(actionName)
-        mutate(actionName) { $0.relink(after: renames) }
+        e.relink(after: renames)
+        commit(e, action: how.isEmpty ? actionName : "\(how): \(actionName)", notes: notes + renames.map { "Renamed “\($0.from)” to “\($0.to)”" })
         refreshBinder()
         refreshLinks()
         status = "\(actionName): \(renames.count) item\(renames.count == 1 ? "" : "s") renamed"
         return true
+    }
+
+    // MARK: Dragging in the binder
+
+    /// Shows what letting a dragged file go at a spot would do, to be confirmed. Nothing changes until it is.
+    func showBinderMove(_ path: String, _ drop: BinderDrop) {
+        guard let tree = binder, !BinderIndexer.move(path, drop, in: tree).isEmpty else { return }
+        Windows.shared.close("binder-move")
+        Windows.shared.show("binder-move", title: "Move in the Binder", size: NSSize(width: 600, height: 440), minSize: NSSize(width: 520, height: 340)) {
+            BinderMoveView(path: path, drop: drop)
+        }
+    }
+
+    /// Carries out a confirmed drag. With `trashing`, the placeholder a document took the place of goes to the Trash.
+    @discardableResult
+    func applyBinderMove(_ renames: [BinderRename], replacedPlaceholder: String? = nil, by newPath: String? = nil) -> Bool {
+        guard let folder else { return false }
+        guard applyBinderRenames(renames, actionName: "Move in Binder") else { return false }
+        if let old = replacedPlaceholder, let newPath {
+            // The document has arrived: links to the placeholder now point at it, and the placeholder goes to the Trash.
+            mutate("Replace Placeholder") { $0.relink(old, to: newPath) }
+            do {
+                try FileManager.default.trashItem(at: folder.appendingPathComponent(old), resultingItemURL: nil)
+                record("Placeholder Moved to the Trash", ["“\(old)” — “\(newPath)” took its place"])
+            } catch {
+                alert = AlertInfo(title: "The placeholder is still in the binder", message: error.localizedDescription)
+            }
+            refreshBinder()
+            refreshLinks()
+        }
+        return true
+    }
+
+    // MARK: Bringing files into the binder
+
+    /// Files dropped on the binder from Finder: asks how to number them before anything moves.
+    func showAddToBinder(_ urls: [URL], folderPath: String, suggested: BinderIndex? = nil) {
+        guard binder != nil, !urls.isEmpty else { return }
+        Windows.shared.close("binder-add")
+        Windows.shared.show("binder-add", title: "Add to the Binder", size: NSSize(width: 600, height: 480), minSize: NSSize(width: 540, height: 400)) {
+            AddToBinderView(urls: urls, folderPath: folderPath, suggested: suggested)
+        }
+    }
+
+    /// Moves (or copies) files into a binder folder. Files are numbered from `start` in the
+    /// order given, and files already at those numbers move up to make room; with no `start`
+    /// they keep their names. Folders come in under their own names. Nothing is overwritten.
+    @discardableResult
+    func addToBinder(_ urls: [URL], folderPath: String, start: BinderIndex?, copy: Bool) -> Bool {
+        guard let folder, let tree = binder, var e = engagement else { return false }
+        let fm = FileManager.default
+        let dir = folderPath.isEmpty ? folder : folder.appendingPathComponent(folderPath, isDirectory: true)
+        func isFolder(_ u: URL) -> Bool { (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false }
+        let incoming = urls.filter { $0.deletingLastPathComponent().standardizedFileURL.path != dir.standardizedFileURL.path }
+        let files = incoming.filter { !isFolder($0) }, folders = incoming.filter(isFolder)
+        guard !incoming.isEmpty else { return false }
+        let plan = BinderIndexer.place(files.map(\.lastPathComponent), at: start, in: tree)
+        let targets = zip(files, plan.names).map { ($0, dir.appendingPathComponent($1)) } + folders.map { ($0, dir.appendingPathComponent($0.lastPathComponent)) }
+        func relative(_ u: URL) -> String { folderPath.isEmpty ? u.lastPathComponent : folderPath + "/" + u.lastPathComponent }
+        do {
+            let vacated = Set(plan.renames.map(\.from))
+            var names = Set<String>()
+            for (_, to) in targets {
+                let taken = fm.fileExists(atPath: to.path) && !vacated.contains(relative(to))
+                if taken || !names.insert(to.lastPathComponent.lowercased()).inserted {
+                    throw TBError("There is already an item named “\(to.lastPathComponent)” in \(folderPath.isEmpty ? "the binder" : (folderPath as NSString).lastPathComponent). Nothing was added.")
+                }
+            }
+            try BinderFileOps.apply(plan.renames, root: folder)
+            var done: [(URL, URL)] = []
+            do {
+                for (from, to) in targets {
+                    if copy { try fm.copyItem(at: from, to: to) } else { try fm.moveItem(at: from, to: to) }
+                    done.append((from, to))
+                }
+            } catch {
+                for (from, to) in done.reversed() {
+                    if copy { try? fm.removeItem(at: to) } else { try? fm.moveItem(at: to, to: from) }
+                }
+                try? BinderFileOps.apply(plan.renames.map { BinderRename(from: $0.to, to: $0.from, isFolder: $0.isFolder) }, root: folder)
+                throw TBError("Couldn't \(copy ? "copy" : "move") the files in: \(error.localizedDescription)")
+            }
+            let renames = plan.renames
+            undoManager?.registerUndo(withTarget: self) { model in model.undoAddToBinder(done, copied: copy, renames: renames) }
+            undoManager?.setActionName("Add to Binder")
+            e.relink(after: renames)
+            let home = NSHomeDirectory()
+            commit(e, action: "Add to Binder", notes: targets.map { from, to in
+                "\(copy ? "Copied" : "Moved") “\(from.path.replacingOccurrences(of: home, with: "~"))” into the binder as “\(relative(to))”"
+            } + renames.map { "Renamed “\($0.from)” to “\($0.to)”" })
+            refreshBinder()
+            refreshLinks()
+            status = "Added \(targets.count) item\(targets.count == 1 ? "" : "s") to \(folderPath.isEmpty ? "the binder" : (folderPath as NSString).lastPathComponent)"
+            return true
+        } catch {
+            alert = AlertInfo(title: "Nothing was added", message: error.localizedDescription)
+            refreshBinder()
+            return false
+        }
+    }
+
+    /// Takes back what Add to Binder did: moved files go back where they came from, copies go
+    /// to the Trash, and the files that made room get their numbers back.
+    private func undoAddToBinder(_ done: [(URL, URL)], copied: Bool, renames: [BinderRename]) {
+        guard let folder, var e = engagement else { return }
+        let fm = FileManager.default
+        var notes: [String] = []
+        for (from, to) in done.reversed() where fm.fileExists(atPath: to.path) {
+            if copied {
+                if (try? fm.trashItem(at: to, resultingItemURL: nil)) != nil { notes.append("“\(to.lastPathComponent)” moved to the Trash") }
+            } else if !fm.fileExists(atPath: from.path), (try? fm.moveItem(at: to, to: from)) != nil {
+                notes.append("“\(to.lastPathComponent)” moved back to \(from.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
+            }
+        }
+        let reversed = renames.map { BinderRename(from: $0.to, to: $0.from, isFolder: $0.isFolder) }
+        if (try? BinderFileOps.apply(reversed, root: folder)) != nil {
+            e.relink(after: reversed)
+            notes += reversed.map { "Renamed “\($0.from)” to “\($0.to)”" }
+        }
+        commit(e, action: "Undo: Add to Binder", notes: notes)
+        refreshBinder()
+        refreshLinks()
+    }
+
+    // MARK: Sign-offs
+
+    static func signOffKey(_ path: String, _ level: SignOffLevel) -> String { path + "\u{1F}" + level.rawValue }
+
+    /// Marks a workpaper as prepared, reviewed or second reviewed — or, if it already is, asks
+    /// whether to take the mark off (or, when the file has changed since, to mark it again).
+    func toggleSignOff(_ level: SignOffLevel, on path: String) {
+        guard let folder, let e = engagement else { return }
+        let url = folder.appendingPathComponent(path)
+        let name = (path as NSString).lastPathComponent
+        if let existing = e.signOff(level, for: path) {
+            let stale = staleSignOffs.contains(Self.signOffKey(path, level))
+            var remark = false
+            if !quiet {
+                let ask = NSAlert()
+                ask.messageText = stale ? "“\(name)” has changed since it was marked \(level.label.lowercased())" : "Take the “\(level.label)” mark off “\(name)”?"
+                ask.informativeText = "\(existing.actor.display) marked it \(level.label.lowercased()) on \(Stamp.local(existing.at)), on \(existing.actor.computer)."
+                    + (stale ? " The file is not the one that was looked at then." : "") + "\n\nEither way, the change log keeps the record of the mark."
+                if stale { ask.addButton(withTitle: "Mark as \(level.label) Again") }
+                ask.addButton(withTitle: "Remove the Mark")
+                ask.addButton(withTitle: "Cancel")
+                let answer = ask.runModal()
+                if stale {
+                    if answer == .alertThirdButtonReturn { return }
+                    remark = answer == .alertFirstButtonReturn
+                } else if answer != .alertFirstButtonReturn {
+                    return
+                }
+            }
+            if !remark {
+                mutate("Remove \(level.label) Mark") { $0.clearSignOff(level, for: path) }
+                return
+            }
+        }
+        guard let hash = FileFingerprint.sha256(of: url) else {
+            alert = AlertInfo(title: "“\(name)” can't be read", message: "It may have been moved or renamed. Refresh the binder and try again.")
+            return
+        }
+        let actor = self.actor
+        mutate("Mark as \(level.label)") { $0.setSignOff(level, for: path, by: actor, fileHash: hash) }
+    }
+
+    /// Checks each signed-off workpaper against the fingerprint taken when it was signed off.
+    private func refreshSignOffs() {
+        guard let e = engagement, let folder, !e.signOffs.isEmpty else {
+            if !staleSignOffs.isEmpty { staleSignOffs = [] }
+            if !missingSignOffs.isEmpty { missingSignOffs = [] }
+            return
+        }
+        var stale = Set<String>(), missing = Set<String>()
+        let fm = FileManager.default
+        for s in e.signOffs {
+            let url = folder.appendingPathComponent(s.path)
+            guard let attributes = try? fm.attributesOfItem(atPath: url.path) else {
+                missing.insert(Self.signOffKey(s.path, s.level))
+                continue
+            }
+            let date = attributes[.modificationDate] as? Date, size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            var hash = fingerprints[s.path].flatMap { $0.date == date && $0.size == size ? $0.hash : nil }
+            if hash == nil {
+                hash = FileFingerprint.sha256(of: url)
+                if let hash { fingerprints[s.path] = (date, size, hash) }
+            }
+            if let hash, !s.fileHash.isEmpty, hash != s.fileHash { stale.insert(Self.signOffKey(s.path, s.level)) }
+        }
+        if stale != staleSignOffs { staleSignOffs = stale }
+        if missing != missingSignOffs { missingSignOffs = missing }
     }
 
     func showSetIndex(for path: String) {
@@ -1051,6 +1345,71 @@ final class AppModel: ObservableObject {
             status = "Saved “\(name)” as a standard list"
         } catch {
             alert = AlertInfo(title: "Couldn't save the grouping list", message: error.localizedDescription)
+        }
+    }
+}
+
+/// Dates in the file are UTC; on screen they are shown in this Mac's time.
+enum Stamp {
+    static func local(_ iso: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f.string(from: date)
+    }
+
+    static func day(_ iso: String) -> String {
+        guard let date = ISO8601DateFormatter().date(from: iso) else { return String(iso.prefix(10)) }
+        let f = DateFormatter()
+        f.dateFormat = "M/d/yy"
+        return f.string(from: date)
+    }
+}
+
+/// Opens a workbook in Excel on a tab, with cells selected.
+enum ExcelOpener {
+    static let bundleID = "com.microsoft.Excel"
+
+    /// False when Excel isn't installed (the caller then opens the file the ordinary way).
+    /// Excel is asked to go to the tab once the workbook is open; `report` is told if it couldn't.
+    static func open(_ url: URL, sheet: String, cells: String, report: @escaping (String) -> Void) -> Bool {
+        guard let excel = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return false }
+        NSWorkspace.shared.open([url], withApplicationAt: excel, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            guard error == nil else { return }
+            DispatchQueue.main.async { go(url.lastPathComponent, sheet, cells, tries: 40, report) }
+        }
+        return true
+    }
+
+    static func script(workbook: String, sheet: String, cells: String) -> String {
+        func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+        var lines = [
+            "tell application id \"\(bundleID)\"",
+            "if not (exists workbook \(q(workbook))) then return \"wait\"",
+            "activate object worksheet \(q(sheet)) of workbook \(q(workbook))",
+        ]
+        if !cells.isEmpty { lines.append("select range \(q(cells)) of worksheet \(q(sheet)) of workbook \(q(workbook))") }
+        lines += ["activate", "return \"ok\"", "end tell"]
+        return lines.joined(separator: "\n")
+    }
+
+    private static func go(_ workbook: String, _ sheet: String, _ cells: String, tries: Int, _ report: @escaping (String) -> Void) {
+        var error: NSDictionary?
+        let result = NSAppleScript(source: script(workbook: workbook, sheet: sheet, cells: cells))?.executeAndReturnError(&error)
+        if let error {
+            let number = error[NSAppleScript.errorNumber] as? Int ?? 0
+            let why = number == -1743 ? "TB Tool isn't allowed to control Excel. Allow it in System Settings ▸ Privacy & Security ▸ Automation."
+                : (error[NSAppleScript.errorMessage] as? String ?? "Excel didn't say why")
+            report("Opened \(workbook), but couldn't go to \(cells.isEmpty ? "the tab “\(sheet)”" : "\(cells) on “\(sheet)”"): \(why)")
+        } else if result?.stringValue == "wait" {
+            guard tries > 0 else {
+                report("Opened \(workbook); Excel was still opening it, so it wasn't taken to “\(sheet)”.")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { go(workbook, sheet, cells, tries: tries - 1, report) }
+        } else {
+            report("Opened \(workbook) at \(cells.isEmpty ? "“\(sheet)”" : "“\(sheet)” \(cells)")")
         }
     }
 }

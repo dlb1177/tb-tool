@@ -114,8 +114,28 @@ struct AppSettingsView: View {
     @State private var groupingSelection: String?
     @State private var renameText = ""
     @State private var confirmDelete = false
+    @AppStorage("settings.tab") private var tab = "groupings"
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) {
+                Text("Grouping Lists").tag("groupings")
+                Text("Binder Layout").tag("binder")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .padding(.vertical, 8)
+            Divider()
+            if tab == "binder" {
+                BinderLayoutSettings()
+            } else {
+                groupingLists
+            }
+        }
+    }
+
+    private var groupingLists: some View {
         VStack(alignment: .leading, spacing: 0) {
             newFiles
             Divider()

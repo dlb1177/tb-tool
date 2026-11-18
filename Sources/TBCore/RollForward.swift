@@ -16,6 +16,8 @@ public struct RollForwardOptions: Equatable, Sendable {
     public var keepLinks = false
     /// The file being rolled forward, recorded in the new file.
     public var sourceName = ""
+    /// Who is rolling forward: the first line of the new file's change log.
+    public var actor: Actor?
 
     public init() {}
 }
@@ -73,6 +75,9 @@ extension Engagement {
         var next = self
         next.periodEnd = summary.newPeriodEnd
         next.rolledForwardFrom = options.sourceName
+        // The new year starts with nothing signed off and its own change log.
+        next.signOffs = []
+        next.auditLog = []
         next.binder.engagement = binder.engagement.replacingOccurrences(of: String(summary.fromYear), with: String(summary.toYear))
         let chart = sortedAccounts
         let typeByID = accountTypes
@@ -148,6 +153,12 @@ extension Engagement {
                                     references: options.keepLinks ? je.references : [])
             copy.rollForward = .none
             next.journalEntries.append(copy)
+        }
+        if let actor = options.actor {
+            next.log("Rolled forward from \(summary.fromYear)", details: [
+                options.sourceName.isEmpty ? "From the \(summary.fromYear) file" : "From \(options.sourceName)",
+                "Journal entries: \(summary.entryCounts)",
+            ], by: actor)
         }
         return next
     }

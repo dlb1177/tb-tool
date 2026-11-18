@@ -2,7 +2,7 @@ import SwiftUI
 import TBCore
 
 enum ReportKind: String, CaseIterable, Identifiable {
-    case consolidating, groupingSummary, groupingDetail, entity, journal, data, accounts
+    case consolidating, groupingSummary, groupingDetail, entity, journal, data, accounts, signOffs, changeLog
 
     var id: String { rawValue }
 
@@ -15,6 +15,8 @@ enum ReportKind: String, CaseIterable, Identifiable {
         case .journal: return "Journal Entries"
         case .data: return "Data (Long Format)"
         case .accounts: return "Chart of Accounts"
+        case .signOffs: return "Workpaper Sign-offs"
+        case .changeLog: return "Change Log"
         }
     }
 
@@ -27,6 +29,8 @@ enum ReportKind: String, CaseIterable, Identifiable {
         case .journal: return "One row per journal line, with the entry's number, type, and linked files."
         case .data: return "One row per trial balance × account with every column. Built for pivots, charts, and handing to Claude."
         case .accounts: return "The shared chart with types and grouping assignments."
+        case .signOffs: return "Every workpaper marked prepared, reviewed or second reviewed: who marked it, and when."
+        case .changeLog: return "Every change to this file: what, who, on which Mac, and when."
         }
     }
 
@@ -43,6 +47,7 @@ struct ReportsView: View {
     @AppStorage(HideZeroToggle.key) private var hideZero = true
     @AppStorage("view.priorCount") private var priorCount = 1
     @AppStorage("entity.priorBasis") private var priorBasis = Basis.book.rawValue
+    @AppStorage("entity.byGrouping") private var byGrouping = false
     @State private var entityID = ""
     @State private var entryFilter = "all"
 
@@ -88,6 +93,10 @@ struct ReportsView: View {
                         }
                         .labelsHidden()
                         .fixedSize()
+                        Toggle("By grouping", isOn: $byGrouping)
+                            .toggleStyle(.checkbox)
+                            .fixedSize()
+                            .help("Lay the accounts out under their groupings and subgroups, with a total for each")
                     }
                     if kind == .journal {
                         Picker("Type", selection: $entryFilter) {
@@ -136,11 +145,14 @@ struct ReportsView: View {
         case .groupingDetail: return reports.groupingSummary(basis: basis, detail: true, prior: priorCount, hideZero: hideZero)
         case .entity:
             let id = ledger.engagement.entity(entityID) != nil ? entityID : (ledger.engagement.entities.first?.id ?? "")
-            return reports.entityTrialBalance(entityID: id, hideZero: hideZero, prior: priorCount, priorBasis: Basis(rawValue: priorBasis) ?? .book)
+            return byGrouping ? reports.entityByGrouping(entityID: id, hideZero: hideZero, prior: priorCount, priorBasis: Basis(rawValue: priorBasis) ?? .book)
+                              : reports.entityTrialBalance(entityID: id, hideZero: hideZero, prior: priorCount, priorBasis: Basis(rawValue: priorBasis) ?? .book)
         case .journal:
             return reports.journalEntries(types: JEType(rawValue: entryFilter).map { [$0] })
         case .data: return reports.tidy(hideZero: hideZero)
         case .accounts: return reports.chartOfAccounts()
+        case .signOffs: return reports.signOffs()
+        case .changeLog: return reports.changeLog()
         }
     }
 }

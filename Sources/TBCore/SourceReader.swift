@@ -91,6 +91,45 @@ public enum SourceReader {
 
 // MARK: - Excel
 
+/// What a journal entry's reference to a workbook can point at: one of its tabs, and cells on it.
+public enum WorkbookTabs {
+
+    /// The names of a workbook's tabs, in the order Excel shows them. Nil when they can't be
+    /// read: the file isn't there, or it is in the older .xls or the binary .xlsb format.
+    public static func names(of url: URL) -> [String]? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe), let zip = try? ZipReader(data),
+              let workbook = zip.entry("xl/workbook.xml") else { return nil }
+        let names = WorkbookParser.parse(workbook).map(\.0)
+        return names.isEmpty ? nil : names
+    }
+
+    /// Cells as typed, tidied to what Excel expects: "b4" → "B4", "$B$4 : d10" → "B4:D10",
+    /// "B:D", "4:10", and several areas with commas. Nil when it isn't a cell reference.
+    public static func cells(_ typed: String) -> String? {
+        let text = typed.uppercased().filter { $0 != "$" && !$0.isWhitespace }
+        guard !text.isEmpty else { return "" }
+        enum Kind { case cell, column, row }
+        func kind(_ s: Substring) -> Kind? {
+            let letters = s.prefix { $0 >= "A" && $0 <= "Z" }
+            let digits = s.dropFirst(letters.count)
+            guard digits.allSatisfy({ $0 >= "0" && $0 <= "9" }), letters.count <= 3, digits.count <= 7 else { return nil }
+            if !digits.isEmpty, Int(digits) == 0 { return nil }
+            if letters.isEmpty { return digits.isEmpty ? nil : .row }
+            return digits.isEmpty ? .column : .cell
+        }
+        for area in text.split(separator: ",", omittingEmptySubsequences: false) {
+            let ends = area.split(separator: ":", omittingEmptySubsequences: false)
+            guard ends.count == 1 || ends.count == 2, let first = kind(ends[0]) else { return nil }
+            if ends.count == 1 {
+                guard first == .cell else { return nil }
+            } else {
+                guard kind(ends[1]) == first else { return nil }
+            }
+        }
+        return text
+    }
+}
+
 enum XLSXReader {
     static func read(_ data: Data, name: String) throws -> [RawSheet] {
         let zip: ZipReader

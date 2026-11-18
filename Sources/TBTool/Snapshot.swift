@@ -22,12 +22,15 @@ enum Snapshotter {
         let first = model.engagement?.entities.first
         if let first {
             steps.append(("entity", { model.selection = .entity(first.id) }))
+            steps.append(("entity-grouped", { UserDefaults.standard.set(true, forKey: "entity.byGrouping") }))
+            steps.append(("entity-plain", { UserDefaults.standard.set(false, forKey: "entity.byGrouping") }))
         }
         steps.append(("journal", { model.selection = .journal }))
         steps.append(("accounts", { model.selection = .accounts }))
         steps.append(("groupings", { model.selection = .groupings }))
         steps.append(("reports", { model.selection = .reports }))
         steps.append(("binder", { model.selection = .binder }))
+        steps.append(("change-log", { model.selection = .changeLog }))
         if let tree = model.binder, let target = tree.unindexed.first(where: { !$0.isFolder }) ?? tree.files.first(where: { !$0.parentPath.isEmpty }) {
             steps.append(("binder-index", { model.showSetIndex(for: target.path) }))
         }
@@ -39,6 +42,14 @@ enum Snapshotter {
         }
         if let entry = model.engagement?.journalEntries.first {
             steps.append(("editor", { model.editEntry(entry.id) }))
+            // Type into the reference picker: every indexed file in the binder, narrowed as you type.
+            steps.append(("reference-search", {
+                guard let window = NSApp.windows.first(where: { $0.title.hasPrefix("Journal Entry") }),
+                      let field = findAll(SearchTextField.self, in: window.contentView).first(where: { ($0.placeholderString ?? "").hasPrefix("Add a reference") }) else { return }
+                window.makeFirstResponder(field)
+                field.currentEditor()?.string = "state"
+                field.textDidChange(Notification(name: NSText.didChangeNotification, object: field.currentEditor()))
+            }))
             steps.append(("activity", {
                 Windows.shared.closeAll()
                 model.showActivity(accountID: entry.lines.first?.account ?? "", entityID: nil)
@@ -100,6 +111,15 @@ enum Snapshotter {
         steps.append(("app-settings", {
             Windows.shared.closeAll()
             model.showAppSettings()
+        }))
+        steps.append(("app-settings-binder", {
+            Windows.shared.closeAll()
+            UserDefaults.standard.set("binder", forKey: "settings.tab")
+            model.showAppSettings()
+        }))
+        steps.append(("app-settings-reset", {
+            Windows.shared.closeAll()
+            UserDefaults.standard.set("groupings", forKey: "settings.tab")
         }))
         steps.append(("rollforward", {
             Windows.shared.closeAll()
@@ -318,6 +338,88 @@ enum Snapshotter {
             steps.append(("rolled-journal", { model.selection = .journal }))
         }
 
+        // With --tb-binder-demo the run works in the binder (use a scratch copy): it signs files
+        // off, changes one afterwards, closes a folder, and opens the windows that confirm a drag
+        // and a drop from Finder.
+        if args.contains("--tb-binder-demo"), let tree = model.binder {
+            let files = tree.indexedFiles.filter { !$0.isPlaceholder }
+            steps.append(("binder-marks", {
+                Windows.shared.closeAll()
+                model.selection = .binder
+                for (n, file) in files.prefix(6).enumerated() {
+                    model.toggleSignOff(.prepared, on: file.path)
+                    if n < 4 { model.toggleSignOff(.reviewed, on: file.path) }
+                    if n < 2 { model.toggleSignOff(.secondReviewed, on: file.path) }
+                }
+                // One workpaper is changed after it was signed off.
+                if files.count > 3, let handle = try? FileHandle(forWritingTo: tree.url(files[3])) {
+                    handle.seekToEndOfFile()
+                    handle.write(Data(" ".utf8))
+                    try? handle.close()
+                }
+                if let folder = tree.folders.last(where: { !$0.children.isEmpty && $0.depth == 0 }) { model.collapsedFolders = [folder.path] }
+                model.refreshBinder()
+            }))
+            let support = tree.folders.first { $0.children.filter { !$0.isFolder && $0.index != nil }.count >= 2 && $0.name.contains("Financials") } ?? tree.folders.first { $0.children.filter { !$0.isFolder && $0.index != nil }.count >= 2 }
+            if let support {
+                let inside = support.children.filter { !$0.isFolder && $0.index != nil }
+                steps.append(("binder-move", { model.showBinderMove(inside[0].path, .after(inside[min(3, inside.count - 1)].path)) }))
+            }
+            if let placeholder = tree.files.first(where: { $0.isPlaceholder && $0.index != nil }), let arriving = tree.unindexed.first(where: { !$0.isFolder }) ?? tree.unfiled.first {
+                steps.append(("binder-replace", {
+                    Windows.shared.closeAll()
+                    model.showBinderMove(arriving.path, .onto(placeholder.path))
+                }))
+            }
+            steps.append(("binder-add", {
+                Windows.shared.closeAll()
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-drop-\(UUID().uuidString.prefix(6))", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let incoming = ["Bank statement - Brighton.pdf", "Bank statement - Clayton.pdf"].map { dir.appendingPathComponent($0) }
+                incoming.forEach { try? Data("x".utf8).write(to: $0) }
+                let target = tree.folders.first { $0.name.contains("Support") } ?? tree.folders[0]
+                model.showAddToBinder(incoming, folderPath: target.path)
+            }))
+            steps.append(("binder-log", {
+                Windows.shared.closeAll()
+                model.selection = .changeLog
+            }))
+            // The same changes carried out, then undone, with the folder listed after each.
+            func listing(_ what: String) {
+                let names = (model.binder?.files ?? []).filter { !$0.parentPath.hasPrefix("5000") }.map(\.path).joined(separator: "\n    ")
+                FileHandle.standardError.write(Data("\(what):\n    \(names)\n  references: \(model.engagement?.journalEntries.flatMap { $0.references.map(\.path) } ?? [])\n  signed: \(Set(model.engagement?.signOffs.map(\.path) ?? []).sorted())\n".utf8))
+            }
+            if let support {
+                let inside = support.children.filter { !$0.isFolder && $0.index != nil }
+                steps.append(("binder-moved", {
+                    model.selection = .binder
+                    listing("before")
+                    model.applyBinderMove(BinderIndexer.move(inside[0].path, .after(inside[min(3, inside.count - 1)].path), in: model.binder!))
+                    listing("after dragging \(inside[0].name) below \(inside[min(3, inside.count - 1)].name)")
+                }))
+            }
+            steps.append(("binder-added", {
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-drop-\(UUID().uuidString.prefix(6))", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let incoming = ["Bank statement - Brighton.pdf", "Bank statement - Clayton.pdf"].map { dir.appendingPathComponent($0) }
+                incoming.forEach { try? Data("x".utf8).write(to: $0) }
+                guard let tree = model.binder, let target = tree.folders.first(where: { $0.name.contains("Support") }) else { return }
+                // At a number that is taken, so the files there have to make room.
+                model.addToBinder(incoming, folderPath: target.path, start: BinderIndex(typed: "\(target.index!.prefix).02", isFolder: false), copy: false)
+                listing("after adding two files at .02 (originals still in the drop folder: \((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []))")
+                model.alert = nil
+            }))
+            steps.append(("binder-undo-add", {
+                model.undoManager?.undo()
+                listing("after undoing the add")
+            }))
+            steps.append(("binder-undo-move", {
+                model.undoManager?.undo()
+                listing("after undoing the drag")
+            }))
+            steps.append(("binder-log-2", { model.selection = .changeLog }))
+        }
+
         // --tb-only a,b,c: just these steps, by name.
         if let only = files("--tb-only").first?.lastPathComponent.split(separator: ",").map(String.init) {
             steps = steps.filter { only.contains($0.0) }
@@ -362,6 +464,11 @@ enum Snapshotter {
             NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { step(0) }
         }
+    }
+
+    private static func findAll<T: NSView>(_ type: T.Type, in view: NSView?) -> [T] {
+        guard let view else { return [] }
+        return (view as? T).map { [$0] } ?? [] + view.subviews.flatMap { findAll(type, in: $0) }
     }
 
     private static func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {

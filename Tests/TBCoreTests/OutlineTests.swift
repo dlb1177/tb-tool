@@ -400,7 +400,7 @@ final class OutlineTests: XCTestCase {
         old.setGrouping("L01", forAccounts: ["10001"])
         old.setGrouping("X1", forAccounts: ["14150"])
         var json = String(data: Store.encode(old), encoding: .utf8)!
-        json = json.replacingOccurrences(of: "\"schemaVersion\": 4", with: "\"schemaVersion\": 3")
+        json = json.replacingOccurrences(of: "\"schemaVersion\": 5", with: "\"schemaVersion\": 3")
         json = json.replacingOccurrences(of: #", "type": "(asset|liability|equity|revenue|expense)" \}"#, with: " }", options: .regularExpression)
         json = json.replacingOccurrences(of: "\"name\": \"Ashford Checking (1042) - 2\", \"type\": \"asset\"", with: "\"name\": \"Ashford Checking (1042) - 2\", \"type\": \"expense\"")
         XCTAssertFalse(json.contains("\"section\": \"Sch. L Accounts\", \"type\""))

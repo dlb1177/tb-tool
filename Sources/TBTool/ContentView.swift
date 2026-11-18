@@ -156,6 +156,7 @@ struct MainView: View {
         case .groupings: GroupingsView()
         case .reports: ReportsView()
         case .binder: BinderView()
+        case .changeLog: ChangeLogView()
         }
     }
 
@@ -201,7 +202,10 @@ struct Sidebar: View {
                 Section("Trial Balances") {
                     ForEach(e.entities) { entity in
                         Label(entity.name, systemImage: "building.2")
-                            .badge(entity.activityNumber.isEmpty ? nil : Text("Act. \(entity.activityNumber)"))
+                            .badge(entity.activityNumber.isEmpty
+                                   ? Text("\(Image(systemName: "exclamationmark.triangle.fill")) No activity #").foregroundStyle(.orange)
+                                   : Text("Act. \(entity.activityNumber)"))
+                            .help(entity.activityNumber.isEmpty ? "This trial balance has no activity number yet. Right-click and choose Details… to give it one." : "")
                             .tag(SidebarItem.entity(entity.id))
                             .contextMenu {
                                 Button("New Adjusting Entry") { model.newEntry(.adjusting, entityID: entity.id) }
@@ -239,6 +243,9 @@ struct Sidebar: View {
                         .badge(model.binderAlerts.count)
                         .tag(SidebarItem.binder)
                         .help("The folders and workpapers in this trial balance's folder, with their index numbers")
+                    Label("Change Log", systemImage: "clock.arrow.circlepath")
+                        .tag(SidebarItem.changeLog)
+                        .help("Every change to this file: what, who, on which Mac, and when")
                 }
             }
         }
@@ -274,7 +281,7 @@ struct Sidebar: View {
             HStack(spacing: 6) {
                 // Ungrouped accounts count once, however many there are.
                 let problems = model.issues.count + model.brokenLinks.count + ((model.engagement?.ungroupedAccounts.isEmpty ?? true) ? 0 : 1)
-                    + model.binderAlerts.count
+                    + model.binderAlerts.count + (model.missingActivity.isEmpty ? 0 : 1)
                 if problems == 0 {
                     CheckBadge(ok: true, text: "Data check: clean")
                 } else {
@@ -329,7 +336,20 @@ struct Sidebar: View {
                         }
                     }
                 }
-                if model.issues.isEmpty && (!model.brokenLinks.isEmpty || !(model.engagement?.ungroupedAccounts.isEmpty ?? true) || !model.binderAlerts.isEmpty) {
+                if let first = model.missingActivity.first {
+                    let n = model.missingActivity.count
+                    HStack {
+                        Label(n == 1 ? "“\(first.name)” has no activity number." : "\(n) trial balances have no activity number (\(model.missingActivity.prefix(3).map(\.name).joined(separator: ", "))\(n > 3 ? ", …" : "")).",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                        Spacer()
+                        Button("Set…") {
+                            showIssues = false
+                            model.showEntityDetails(first.id)
+                        }
+                    }
+                }
+                if model.issues.isEmpty && (!model.brokenLinks.isEmpty || !(model.engagement?.ungroupedAccounts.isEmpty ?? true) || !model.binderAlerts.isEmpty || !model.missingActivity.isEmpty) {
                     EmptyView()
                 } else if model.issues.isEmpty {
                     Text("Every trial balance is in balance, every entry balances and follows the posting rules, and every reference points at something that exists.")

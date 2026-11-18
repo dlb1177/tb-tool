@@ -253,10 +253,26 @@ public struct JELine: Equatable, Sendable {
 public struct FileReference: Equatable, Sendable {
     public var path: String
     public var note: String
+    /// For a workbook: the tab the entry refers to, and (optionally) the cells on it, like "B4:D10".
+    public var sheet: String
+    public var cells: String
 
-    public init(path: String, note: String = "") {
+    public init(path: String, note: String = "", sheet: String = "", cells: String = "") {
         self.path = path
         self.note = note
+        self.sheet = sheet
+        self.cells = cells
+    }
+
+    /// The tab and cells as Excel writes them: "'Depreciation'!B4:D10", or just the tab's name.
+    public var location: String {
+        guard !sheet.isEmpty else { return "" }
+        return cells.isEmpty ? sheet : "'\(sheet)'!\(cells)"
+    }
+
+    /// True for the Excel workbook formats, which have tabs and cells to point at.
+    public var isWorkbook: Bool {
+        ["xlsx", "xlsm", "xls", "xlsb", "xltx", "xltm"].contains((path as NSString).pathExtension.lowercased())
     }
 
     public init(file: URL, engagementFolder: URL?) {
@@ -331,6 +347,10 @@ public struct Engagement: Equatable, Sendable {
     public var groupingListName = ""
     /// The file this one was rolled forward from, if any.
     public var rolledForwardFrom = ""
+    /// Workpapers marked as prepared, reviewed or second reviewed.
+    public var signOffs: [SignOff] = []
+    /// Every change made to the file: what, who, on which Mac, and when.
+    public var auditLog: [AuditEntry] = []
     /// Top-level fields this app doesn't know about; written back untouched.
     public var extras: [JSONField] = []
 

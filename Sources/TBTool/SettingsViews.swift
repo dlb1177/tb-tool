@@ -21,6 +21,8 @@ struct SettingsView: View {
     /// Once the list is chosen by hand, changing the entity type no longer changes it.
     @State private var listChosen = false
     @State private var loaded = false
+    /// New file: lay the standard binder folders out beside it.
+    @AppStorage("setup.makeFolders") private var makeFolders = true
 
     private static let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
@@ -90,6 +92,10 @@ struct SettingsView: View {
                     TextField("Firm", text: $binder.firm)
                     TextField("Prepared by", text: $binder.preparedBy)
                     TextField("Reviewed by", text: $binder.reviewedBy)
+                    if mode == .setup {
+                        Toggle("Make the standard binder folders beside the new file", isOn: $makeFolders)
+                            .help("\(BinderLayouts.load().layout(forEntityType: binder.entityType).folders.map(\.name).joined(separator: " · ")). Change the layout in TB Tool ▸ Settings ▸ Binder Layout. Nothing is made where there are folders already.")
+                    }
                 }
                 if mode == .setup {
                     Section("Grouping list") {
@@ -219,7 +225,7 @@ struct SettingsView: View {
             e.binder = binder
             e.groupingListName = chosenList.name
             if e.binder.engagement.trimmingCharacters(in: .whitespaces).isEmpty { e.binder.engagement = "" }
-            if model.createFile(e) { Windows.shared.close("setup") }
+            if model.createFile(e, makeFolders: makeFolders) { Windows.shared.close("setup") }
         }
     }
 }
@@ -379,7 +385,7 @@ struct RollForwardView: View {
                 Divider()
                 HStack {
                     Text(tab == "binder" && tree != nil
-                         ? "Roll forward copies a file into next year's binder with its index and without its Finder tags. Placeholder leaves an empty text file under the same name, noting where this year's file is."
+                         ? "Roll forward copies a file into next year's binder with its index and without its Finder tags. Placeholder leaves an empty text file with the same index, marked (PLACEHOLDER), noting where this year's file is."
                          : "Without amounts: the entry waits in the new file marked “needs amounts” and posts nothing until you fill it in. As reversal: debits and credits are swapped, dated \(Timestamp.day(e.periodEnd, addingDays: 1) ?? "the first day of the new year"), and each line's memo starts “[Reversal from \(String(summary.fromYear))]”.")
                         .font(.callout)
                         .foregroundStyle(.secondary)

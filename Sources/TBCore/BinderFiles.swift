@@ -71,18 +71,40 @@ public struct BinderItem: Equatable, Identifiable, Sendable {
     public var tags: [String] = []
 
     public var id: String { path }
+    /// The name to show: for a placeholder, the document it stands for.
+    public var displayTitle: String { isPlaceholder ? BinderPlaceholder.document(title) : title }
     public var parentPath: String { (path as NSString).deletingLastPathComponent }
     public var depth: Int { path.split(separator: "/").count - 1 }
 }
 
 public enum BinderPlaceholder {
-    static let marker = " (placeholder).txt"
+    /// Goes between the index and the document's name: "4000.03 (PLACEHOLDER) Bank statement.pdf.txt".
+    static let tag = "(PLACEHOLDER) "
+    /// How placeholders were named before version 1.5: "4000.03 Bank statement.pdf (placeholder).txt".
+    static let earlierMarker = " (placeholder).txt"
 
-    public static func isPlaceholder(_ name: String) -> Bool { name.hasSuffix(marker) }
+    public static func isPlaceholder(_ name: String) -> Bool {
+        if name.hasSuffix(earlierMarker) { return true }
+        let title = BinderIndex.parse(name, isFolder: false).title
+        return title.hasPrefix(tag) && title.lowercased().hasSuffix(".txt") && title.count > tag.count + 4
+    }
 
-    /// "2000.02 GL.xlsx" → "2000.02 GL.xlsx (placeholder).txt". A placeholder keeps its name.
+    /// "2000.02 GL.xlsx" → "2000.02 (PLACEHOLDER) GL.xlsx.txt". A placeholder keeps its name
+    /// (one named the earlier way takes the present form).
     public static func name(for original: String) -> String {
-        isPlaceholder(original) ? original : original + marker
+        let parsed = BinderIndex.parse(original, isFolder: false)
+        let front = parsed.index.map { $0.text + " " } ?? ""
+        if original.hasSuffix(earlierMarker) { return front + tag + parsed.title.dropLast(earlierMarker.count) + ".txt" }
+        if isPlaceholder(original) { return original }
+        return front + tag + parsed.title + ".txt"
+    }
+
+    /// The document a placeholder stands for, from its name without the index:
+    /// "(PLACEHOLDER) GL.xlsx.txt" → "GL.xlsx".
+    public static func document(_ title: String) -> String {
+        if title.hasSuffix(earlierMarker) { return String(title.dropLast(earlierMarker.count)) }
+        if title.hasPrefix(tag), title.lowercased().hasSuffix(".txt") { return String(title.dropFirst(tag.count).dropLast(4)) }
+        return title
     }
 }
 
@@ -112,6 +134,16 @@ public struct BinderTree: Equatable, Sendable {
     }
 
     public var files: [BinderItem] { all.filter { !$0.isFolder } }
+
+    /// Every indexed file, in index order whatever folder it is in: what a journal entry can refer to.
+    public var indexedFiles: [BinderItem] {
+        files.filter { $0.index != nil }.sorted { a, b in
+            let x = a.index!, y = b.index!
+            if x.prefix != y.prefix { return x.prefix.compare(y.prefix, options: .numeric) == .orderedAscending }
+            if x.suffix != y.suffix { return (x.suffix ?? 0) < (y.suffix ?? 0) }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
     public var folders: [BinderItem] { all.filter(\.isFolder) }
     public func item(_ path: String) -> BinderItem? { all.first { $0.path == path } }
     public func children(of folderPath: String) -> [BinderItem] { folderPath.isEmpty ? items : (item(folderPath)?.children ?? []) }
@@ -207,6 +239,22 @@ public struct BinderRename: Equatable, Sendable {
     }
 }
 
+/// Where a dragged file is let go.
+public enum BinderDrop: Equatable, Sendable {
+    /// Above this file: it goes in at that file's number.
+    case before(String)
+    /// Below this file: it goes in at the number after.
+    case after(String)
+    /// On this item. On a file, it takes that file's index and the file loses it. On a folder, it is filed there.
+    case onto(String)
+
+    public var target: String {
+        switch self {
+        case .before(let p), .after(let p), .onto(let p): return p
+        }
+    }
+}
+
 public enum BinderIndexConflict: Sendable {
     /// The item that has the number loses its index.
     case replace
@@ -221,6 +269,12 @@ public enum BinderIndexer {
         guard name != item.name else { return nil }
         let parent = item.parentPath
         return BinderRename(from: item.path, to: parent.isEmpty ? name : parent + "/" + name, isFolder: item.isFolder)
+    }
+
+    private static func rename(_ item: BinderItem, to index: BinderIndex?, in folder: String) -> BinderRename? {
+        let name = index.map { $0.text + " " + item.title } ?? item.title
+        let to = folder.isEmpty ? name : folder + "/" + name
+        return to == item.path ? nil : BinderRename(from: item.path, to: to, isFolder: item.isFolder)
     }
 
     private static func sameSlot(_ a: BinderIndex, _ b: BinderIndex) -> Bool { a.prefix == b.prefix && a.suffix == b.suffix }
@@ -346,6 +400,74 @@ public enum BinderIndexer {
         return [BinderRename(from: path, to: folderPath + "/" + name)]
     }
 
+    /// What dragging a file to a new place does, as renames; nothing is changed here.
+    ///
+    /// - Above or below a file in the same run of numbers: the files change places and the run
+    ///   keeps the numbers it had, so only the files between the two spots are renumbered.
+    /// - Above or below a file from somewhere else (another folder, or with no index): it takes
+    ///   the number at that spot, and the file there, with any that follow it without a gap,
+    ///   moves up by one.
+    /// - Onto a file: it takes that file's index and place, and that file is left with no index.
+    /// - Onto a folder: it is filed there with the folder's next index.
+    public static func move(_ path: String, _ drop: BinderDrop, in tree: BinderTree) -> [BinderRename] {
+        guard let item = tree.item(path), !item.isFolder, drop.target != path, let target = tree.item(drop.target) else { return [] }
+        if target.isFolder { return drop == .onto(target.path) ? file(path, into: target.path, in: tree) : [] }
+        let folder = target.parentPath
+        // A file with no index has no number to give up or to sit beside: the dragged file is filed in its folder.
+        guard let at = target.index else { return folder.isEmpty ? [] : file(path, into: folder, in: tree) }
+
+        if case .onto = drop {
+            let taken = BinderIndex(prefix: at.prefix, suffix: at.suffix, width: at.width)
+            return ordered([rename(item, to: taken, in: folder), rename(target, to: nil, in: folder)].compactMap { $0 })
+        }
+        let below = drop == .after(target.path)
+        let run = tree.files.filter { $0.index?.prefix == at.prefix }
+            .sorted { ($0.index!.suffix ?? 0, $0.path) < ($1.index!.suffix ?? 0, $1.path) }
+
+        if item.index?.prefix == at.prefix {
+            // Same run: the numbers stay, the files change places.
+            var order = run.filter { $0.path != path }
+            guard let spot = order.firstIndex(where: { $0.path == target.path }) else { return [] }
+            order.insert(item, at: below ? spot + 1 : spot)
+            let numbers = run.map { $0.index! }
+            return ordered(order.enumerated().compactMap { n, file in
+                rename(file, to: numbers[n], in: file.path == path ? folder : file.parentPath)
+            })
+        }
+
+        var slot = below ? next(after: at) : at
+        var out = [rename(item, to: slot, in: folder)].compactMap { $0 }
+        var inTheWay = holder(of: slot, isFolder: false, in: tree, except: path)
+        var moved = Set<String>()
+        while let file = inTheWay, moved.insert(file.path).inserted {
+            slot = next(after: slot)
+            if let r = rename(file, to: slot, in: file.parentPath) { out.append(r) }
+            inTheWay = holder(of: slot, isFolder: false, in: tree, except: path).flatMap { moved.contains($0.path) ? nil : $0 }
+        }
+        return ordered(out)
+    }
+
+    /// Names for files being brought into a folder, numbered from `start` in the order given,
+    /// and the renames that make room: files already at those numbers, and any that follow them
+    /// without a gap, move up past the new ones. With no `start` the files keep their names.
+    public static func place(_ names: [String], at start: BinderIndex?, in tree: BinderTree) -> (names: [String], renames: [BinderRename]) {
+        guard let start, let first = start.suffix, !names.isEmpty else { return (names, []) }
+        let width = max(start.width, String(first + names.count - 1).count)
+        let placed = names.enumerated().map { n, name in
+            BinderIndex(prefix: start.prefix, suffix: first + n, width: width).text + " " + BinderIndex.parse(name, isFolder: false).title
+        }
+        var free = first + names.count
+        var renames: [BinderRename] = []
+        let run = tree.files.filter { $0.index?.prefix == start.prefix && ($0.index!.suffix ?? 0) >= first }
+            .sorted { ($0.index!.suffix ?? 0, $0.path) < ($1.index!.suffix ?? 0, $1.path) }
+        for file in run {
+            guard (file.index!.suffix ?? 0) < free else { break }
+            if let r = rename(file, to: BinderIndex(prefix: start.prefix, suffix: free, width: max(file.index!.width, String(free).count)), in: file.parentPath) { renames.append(r) }
+            free += 1
+        }
+        return (placed, ordered(renames))
+    }
+
     /// Files before folders, deepest first: the order they can be carried out in.
     private static func ordered(_ list: [BinderRename]) -> [BinderRename] {
         list.sorted { a, b in
@@ -432,13 +554,21 @@ public enum BinderFileOps {
 }
 
 extension Engagement {
-    /// Keeps journal entries' linked files pointing at binder items that were renamed or moved.
-    /// Returns how many links changed.
+    /// Keeps journal entries' linked files, and workpaper sign-offs, pointing at binder items
+    /// that were renamed or moved. Returns how many links changed.
     @discardableResult
     public mutating func relink(after renames: [BinderRename]) -> Int {
         var n = 0
         let files = Dictionary(renames.filter { !$0.isFolder }.map { ($0.from, $0.to) }, uniquingKeysWith: { a, _ in a })
         let folders = renames.filter(\.isFolder)
+        for i in signOffs.indices {
+            let path = signOffs[i].path
+            if let to = files[path] {
+                signOffs[i].path = to
+            } else if let f = folders.first(where: { path.hasPrefix($0.from + "/") }) {
+                signOffs[i].path = f.to + path.dropFirst(f.from.count)
+            }
+        }
         for i in journalEntries.indices {
             for j in journalEntries[i].references.indices {
                 let path = journalEntries[i].references[j].path
@@ -472,6 +602,8 @@ public struct BinderRollResult: Equatable, Sendable {
     public var placeholders = 0
     /// Items that were already in the destination and were left as they were.
     public var alreadyThere: [String] = []
+    /// Files that have a different name in the new binder (a document left as a placeholder).
+    public var renamed: [BinderRename] = []
 }
 
 public enum BinderRoller {
@@ -536,6 +668,7 @@ public enum BinderRoller {
                     if item.isPlaceholder, let earlier = try? String(contentsOf: source, encoding: .utf8), !earlier.trimmed.isEmpty { text += earlier.trimmed + "\n" }
                     try Data(text.utf8).write(to: target, options: .atomic)
                     result.placeholders += 1
+                    if name != item.name { result.renamed.append(BinderRename(from: item.path, to: item.parentPath.isEmpty ? name : item.parentPath + "/" + name)) }
                 } else {
                     try fm.copyItem(at: source, to: target)
                     // A rolled-forward file starts the year unreviewed: no Finder tags.

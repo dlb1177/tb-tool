@@ -240,15 +240,33 @@ struct EntityView: View {
     @AppStorage(HideZeroToggle.key) private var hideZero = true
     @AppStorage("view.priorCount") private var priorCount = 1
     @AppStorage("entity.priorBasis") private var priorBasis = Basis.book.rawValue
+    /// Show the accounts under their groupings, with a total for each, as the grouping detail report does.
+    @AppStorage("entity.byGrouping") private var byGrouping = false
     let entityID: String
 
     var body: some View {
         if let ledger = model.liveLedger ?? model.ledger, let entity = ledger.engagement.entity(entityID) {
             let e = ledger.engagement
-            let table = Reports(ledger: ledger).entityTrialBalance(entityID: entityID, hideZero: hideZero, prior: priorCount,
-                                                                   priorBasis: Basis(rawValue: priorBasis) ?? .book)
+            let reports = Reports(ledger: ledger)
+            let basis = Basis(rawValue: priorBasis) ?? .book
+            let table = byGrouping ? reports.entityByGrouping(entityID: entityID, hideZero: hideZero, prior: priorCount, priorBasis: basis)
+                                   : reports.entityTrialBalance(entityID: entityID, hideZero: hideZero, prior: priorCount, priorBasis: basis)
             VStack(spacing: 0) {
                 PageHeader(title: entity.name, subtitle: subtitle(entity)) {
+                    if entity.activityNumber.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Button {
+                            model.showEntityDetails(entityID)
+                        } label: {
+                            Label("No activity number", systemImage: "exclamationmark.triangle.fill")
+                        }
+                        .foregroundStyle(.orange)
+                        .help("Every trial balance needs the activity number it is imported under in the tax software. Click to set it.")
+                    }
+                    Toggle(isOn: $byGrouping) {
+                        Label("By Grouping", systemImage: "list.bullet.indent")
+                    }
+                    .toggleStyle(.button)
+                    .help("Show the accounts under their groupings and subgroups, with a total for each. Click again for the plain list.")
                     PriorPeriodsMenu(ledger: ledger, count: $priorCount, basis: $priorBasis)
                     HideZeroToggle()
                     Menu {
@@ -297,9 +315,10 @@ struct EntityView: View {
                     }
                     .padding(.top, 80)
                 } else {
-                    GridPanel(table: table, key: "entity") { row in
+                    GridPanel(table: table, key: byGrouping ? "entity.grouped" : "entity") { row in
                         if let id = row.accountID { model.showActivity(accountID: id, entityID: entityID) }
                     }
+                    .id(byGrouping)
                     Divider()
                     checks(ledger)
                 }

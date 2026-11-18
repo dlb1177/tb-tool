@@ -51,8 +51,9 @@ consolidation simply has one column.
 
 **The file.** One `.json` file per engagement per year. It identifies itself with
 `"fileType": "trial-balance"`. Everything described in this manual is stored in it except
-standard grouping lists, saved import layouts, saved filters and window positions, which are
-preferences of the app on your Mac ([section 18](#18-where-things-are-kept)).
+standard grouping lists, binder layouts, saved import layouts, saved filters and window
+positions, which are preferences of the app on your Mac
+([section 18](#18-where-things-are-kept)).
 
 **Trial balances.** A file holds any number of sibling trial balances (the sidebar lists them).
 Each one stores its *unadjusted* balances: what you imported or typed. Nothing else about a
@@ -95,6 +96,14 @@ Each file carries its own grouping list.
 and an account in that grouping has that type. The type is never chosen on the account itself,
 so the two cannot disagree.
 
+**The binder.** The folder the file sits in is the client's binder for the year: numbered
+folders holding indexed workpapers. The app reads it, numbers it, moves files in it, and rolls
+it forward with the trial balance ([section 11](#11-the-binder)).
+
+**The paper trail.** Every change to a file is written to a change log inside it, with who made
+it, on which Mac, and when. Workpapers are signed off as prepared, reviewed and second reviewed
+the same way ([section 14](#14-saving-undo-backups-and-the-data-check)).
+
 **The current year and prior periods.** The year of the file's year end is the current year.
 Prior years' closing balances can be stored beside it and are shown as **PP1** (one year
 back), **PP2**, and so on.
@@ -128,13 +137,16 @@ the file in Finder).
 The sidebar holds:
 
 - **Consolidated**: every trial balance side by side.
-- **Trial Balances**: one row per trial balance, and **Add…**.
+- **Trial Balances**: one row per trial balance, and **Add…**. Each shows its activity number,
+  or an orange **No activity #** until it has one.
 - **Journal Entries**, with a count.
 - **Accounts**, with a count of accounts that have no grouping yet.
 - **Grouping List**.
 - **Reports & Export**.
 - **Binder**: the folders and workpapers in the trial balance's folder, with a count of what
   needs attention ([section 11](#11-the-binder)).
+- **Change Log**: every change made to the file
+  ([section 14](#14-saving-undo-backups-and-the-data-check)).
 - At the bottom, the **data check** ([section 14](#14-saving-undo-backups-and-the-data-check)).
 
 The toolbar holds **New Entry**, **Import**, **Quick Export**, **Roll Forward**, and the gear
@@ -142,7 +154,8 @@ for **Trial Balance Settings**.
 
 **Windows.** Everything that is not one of the main screens opens in its own window: a journal
 entry, the activity behind an account, the accounts in a grouping, the balance editor, the
-import screen, settings, roll forward, the broken-links list. They are ordinary windows. Move
+import screen, settings, roll forward, the broken-links list, and the windows that confirm a
+change to the binder. They are ordinary windows. Move
 them, resize them, put them on another display. Each kind remembers where you last put it, and
 a window holding unsaved typing asks before it closes.
 
@@ -158,13 +171,21 @@ File ▸ **New Trial Balance File…** (⌘N) opens the setup window.
 - **Year**: the current year and the year end (month and day). Prior-period columns count back
   from this year.
 - **Binder**: engagement ("2026 Tax Return"), firm, prepared by, reviewed by. Firm and preparer
-  are filled in from the app's settings.
+  are filled in from the app's settings. The last row, **Make the standard binder folders
+  beside the new file**, is on unless you turn it off: the folders of the binder layout for the
+  entity type are made in the folder you save the file in. The layout is set in the app's
+  settings, below.
 - **Grouping list**: the list the file starts with. It defaults to the standard list for the
   entity type you chose ([section 10](#10-groupings)). The file gets its own copy.
 - A preview shows how report headings will read.
 
-Click **Create…** and choose where the file goes. Put it in the client's folder, so that
-workpapers you link to entries are stored as paths relative to it.
+Click **Create…** and choose where the file goes. Put it in the client's folder for the year:
+that folder becomes the binder ([section 11](#11-the-binder)).
+
+The binder folders are made only in a folder that is empty of folders. If the place you choose
+already has folders in it, or is a general folder such as the Desktop or Documents, none are
+made and the status line says so. A file made by **rolling forward** never uses the layout: it
+takes last year's folders ([section 12](#12-prior-years-and-rolling-forward)).
 
 ### Changing it later
 
@@ -177,9 +198,44 @@ prior. To start the next year, roll forward ([section 12](#12-prior-years-and-ro
 
 ### Settings for the app itself
 
-TB Tool ▸ **Settings…** (⌘,) holds what applies to every file: the firm and preparer that new
-files start with, the Hide zero rows switch, and the standard grouping lists
-([section 10](#10-groupings)).
+TB Tool ▸ **Settings…** (⌘,) holds what applies to every file. It has two tabs:
+
+- **Grouping Lists**: the firm and preparer that new files start with, the Hide zero rows
+  switch, and the standard grouping lists ([section 10](#10-groupings)).
+- **Binder Layout**: the folders a brand-new binder starts with.
+
+### The binder layout for new files
+
+![The binder layout in the app's settings](images/binder-layout.png)
+
+One layout serves **every entity type**. It ships as:
+
+```
+0000 Binder Notes
+2000 Client Financials
+3000 Standard Workpapers
+3050 Additional Workpapers
+4000 Support
+5000 Permanent Files
+    5010 PY Tax Returns
+    5020 Entity Formation Documents
+    5030 Tax Resolution & Notices
+```
+
+- **To change it**, select *Every entity type* on the left and edit the outline: one folder per
+  line, and a folder inside another indented under it with Tab or four spaces. Start each name
+  with its number, so the files inside can be indexed. The picture beside the outline shows the
+  folders as they will be made. **Save** (⌘S) keeps it; **Revert** drops what you typed;
+  **Put Back the Built-in Layout** restores the one above.
+- **To give one entity type its own layout**, select the type and click **Give It Its Own
+  Layout**. It starts as a copy of the layout for every type. **Use the Layout for Every Type
+  Instead** removes it again.
+- A layout is refused while two folders in the same place share a name, two folders share a
+  number, or a name contains `/` or `:`.
+
+The layout applies to files created after it is saved. Binders you already have are not
+touched. A binder with no folders yet can be given them from its Binder screen (**Make the
+Standard Folders**).
 
 ## 5. Importing trial balances
 
@@ -311,6 +367,9 @@ Select a trial balance in the sidebar. The columns are Account, Name, Grp (group
 **Unadjusted, AJE, Adjusted, RJE, Final (Book), TJE, Tax Basis**, then the prior periods and
 **Change vs PP1**. At the top right:
 
+- **No activity number**, in orange, while the trial balance has none. Click it to set one.
+- **By Grouping**: shows the same balances laid out by grouping (below). Click it again for
+  the plain list.
 - **Prior Periods**: how many, and whether they are shown on the book or the tax basis.
 - **Hide zero rows**.
 - **New Entry**: an adjusting, reclassifying or tax-only entry for this trial balance.
@@ -324,16 +383,33 @@ Right-click a trial balance in the sidebar for New Adjusting Entry, Details…, 
 Balances…, Replace Balances from File…, and Delete…. Deleting removes its balances and the
 entries posted only to it. It is refused while an eliminating entry still refers to it.
 
+### One trial balance, by grouping
+
+![One trial balance laid out by grouping](images/trial-balance-by-grouping.png)
+
+**By Grouping** lays the trial balance out the way the Grouping Detail report does: each
+section, each grouping with its total in bold, subgroups nested under their grouping, and the
+accounts inside each. Accounts with no grouping come last, under *Ungrouped accounts*. The
+amount columns, the total and net income are exactly those of the plain list. Double-click an
+account for its activity, or a grouping for its accounts across every trial balance. The
+choice is remembered, and it has its own column layout. The same layout is available for
+export as the Single Trial Balance report with **By grouping** ticked
+([section 13](#13-reports-and-exports)).
+
 ### A trial balance's name and activity number
 
 ![Trial balance details](images/trial-balance-details.png)
 
 **Details…** (or Balances ▸ Name and Activity Number…) sets the trial balance's name and its
 **activity number**: the number it is imported under in the tax software (the activity in CCH).
-The number is optional. It is shown beside the name in the sidebar, heads that trial balance's
-report, and is the Activity column of the long-format data export, so each row of that export
-says which activity it belongs to. Two trial balances cannot share a number. It carries into
-next year's file on a roll forward.
+It is shown beside the name in the sidebar, heads that trial balance's report, and is the
+Activity column of the long-format data export, so each row of that export says which activity
+it belongs to. Two trial balances cannot share a number. It carries into next year's file on a
+roll forward.
+
+**Every trial balance needs one.** It does not have to be given at import, but until it is the
+trial balance is flagged: an orange **No activity #** beside its name in the sidebar, an orange
+**No activity number** button at the top of its screen, and a line in the data check.
 
 ### Account activity
 
@@ -431,7 +507,7 @@ or ⌘J (adjusting), ⇧⌘J (reclassifying), ⌥⌘J (tax-only), ⌃⌘J (elimi
   ([section 12](#12-prior-years-and-rolling-forward)).
 - **Lines**: account, debit or credit, memo. **Add Line** (⌘L) adds a line that starts with
   whatever amount would balance the entry. **New Account…** adds an account to the chart.
-- **Linked Files**: the workpapers that support the entry.
+- **References**: the workpapers that support the entry, picked from the binder.
 - The footer shows debits, credits and the difference, and lists anything stopping the entry
   from being posted.
 - **Post Entry** (Return), **Post & New** (⇧⌘↩) to post and start another of the same type,
@@ -485,15 +561,56 @@ an error, and the consolidation stays in balance.
 switched to adjusting or tax-only; the type goes back and a message says why. Put every line
 on the same trial balance first.
 
-### Linked files
+### References
 
-Click **Link File…** or drop files on the Linked Files box. Each link can carry a note (tab,
-page, cell). Click a file's name to open it; the magnifying glass shows it in Finder.
+A reference ties an entry to a workpaper in the binder.
 
-A link to a file inside the client's folder is stored relative to the folder, so the whole
-folder can be moved. A link to a file elsewhere is stored as a full path.
+**Adding one.** Click in the **Add a reference** field. A list drops down of **every indexed
+file in the binder**, in index order, whatever folder or subfolder each is in, with its folder
+shown on the right. Type any part of an index or a file name (in any order) and the list
+narrows as you type. ↑ ↓ move, Return or Tab takes the highlighted file, Esc closes the list.
+The field then empties, ready for the next one.
 
-**Broken links are flagged.** If a linked file is moved or renamed:
+![Picking a reference from the binder's indexed files](images/reference-search.png)
+
+Only indexed files are offered, so index a workpaper on the Binder screen first
+([section 11](#11-the-binder)). Placeholders are offered too, marked as such. Files are no
+longer chosen through a Finder dialog or by dropping them on the entry.
+
+**Each reference has:**
+
+- its name, which opens the file when clicked;
+- a **note** (page, line, whatever helps);
+- a magnifying glass, which shows the file in Finder;
+- an ✕, which removes the reference. The file itself is never touched.
+
+**A reference to an Excel workbook** (`.xlsx`, `.xlsm`, `.xls`, `.xlsb`, `.xltx`, `.xltm`)
+also has:
+
+- **Tab**: a menu of the workbook's tabs. **You must choose one**, even when the workbook has
+  only one tab; the entry cannot be posted or saved until you do, and the field is outlined in
+  orange until then. For an `.xls` or `.xlsb` workbook, whose tabs the app cannot read, you
+  type the tab's name instead.
+- **Cells** (optional): the cells on that tab, such as `B4` or `B4:D10`. Whole columns
+  (`B:D`), whole rows (`4:10`) and several areas separated by commas also work. Anything else
+  is refused when the entry is posted.
+
+**Opening a workbook reference.** Clicking the name opens the workbook in Excel **on that
+tab**, with **those cells selected** if you gave any. To do this TB Tool asks Excel to go
+there, and the first time macOS asks whether TB Tool may control Excel: click **OK**. If you
+refuse, or Excel is not installed, the workbook simply opens, and the status line says why it
+was not taken to the tab. The same workbook can be referenced more than once on an entry, for
+different tabs.
+
+The journal report and its exports show the tab and cells after the file:
+`3000.01 Mortgage interest accrual.xlsx ['Accrual'!B4:D10]`.
+
+A reference is stored as the file's path within the binder, so the whole folder can be moved.
+**References follow the file**: when you renumber, rename or move a workpaper on the Binder
+screen, every entry that refers to it is updated.
+
+**Broken links are flagged.** If a referenced file is moved or renamed outside TB Tool (in
+Finder, say):
 
 - the entry shows "missing" in the Files column;
 - the Journal Entries screen shows a banner;
@@ -511,6 +628,9 @@ client's folder for a file of the same name:
   or the nearest folder above it that still exists. Locating one file also repairs other broken
   links whose files moved to the same folder.
 - **Remove Link** removes the link from the entry. No file is ever deleted.
+
+In the entry window, a reference whose file cannot be found is shown in orange; remove it and
+pick the file again from the list.
 
 ## 9. Accounts
 
@@ -712,13 +832,18 @@ with the trial balance at its top.
       2000.01 Ashford Trial Balance.csv
       2000.02 Brighton Trial Balance.csv
     3000 Standard Workpapers/
+    3050 Additional Workpapers/
     4000 Support/
     5000 Permanent Files/
       5010 PY Tax Returns/
       5020 Entity Formation Documents/
         5020.01 Operating agreement.pdf
+      5030 Tax Resolution & Notices/
     TB Backups/
 ```
+
+A new file starts with those folders: they are the binder layout, which you can change
+([section 4](#4-setting-up-a-file)).
 
 Everything in that folder other than the trial balance file itself, `TB Backups` and hidden
 files is part of the binder. A trial balance saved in a general folder (your home folder,
@@ -739,18 +864,122 @@ mistaken for workpapers.
 ![The binder](images/binder.png)
 
 **Binder** in the sidebar shows the whole binder opened out: every folder and file, indented
-as they are nested, with its index, its name, and any Finder tags. A file with no index says
-*no index*; a loose file beside the trial balance says *not filed*; a placeholder left by a
-roll forward is marked. **Only what needs attention** narrows the list to those.
+as they are nested, with its index, its name, any Finder tags, and its sign-off marks. A file
+with no index says *no index*; a loose file beside the trial balance says *not filed*; a
+placeholder left by a roll forward is marked. The screen is meant to replace the Finder window
+for the binder: files are brought in, moved, numbered, previewed, opened and signed off here.
 
 The folder is read when a file is opened and whenever you come back to TB Tool from another
-app. **Refresh** reads it again. Double-click a file to open it.
+app. **Refresh** reads it again.
+
+| To | Do this |
+|---|---|
+| Select an item | Click it, or move with ↑ and ↓. |
+| Open a file | Double-click it. |
+| Preview a file | Press **Space** (or click **Preview**). |
+| Close or open a folder | Click its arrow, double-click it, or press ← and →. |
+| Close or open every folder | **Collapse All**, **Expand All**. |
+| Add files from Finder | Drop them on a folder. |
+| Move or renumber a file | Drag it. |
+| Sign a file off | Click **P**, **R** or **2R** on its row. |
+| Everything else | Right-click the item. |
 
 **Alerts.** The top of the screen, the badge in the sidebar and the data check all report:
 
 - files sitting **loose** beside the trial balance, which should be filed in a folder;
 - items with **no index**;
-- an index **used more than once**.
+- an index **used more than once**;
+- a workpaper that **changed after it was signed off**, or a signed-off workpaper that can no
+  longer be found.
+
+**Only what needs attention** narrows the list to those.
+
+### Opening and closing folders
+
+Each folder has an arrow. Click it (or double-click the folder, or press ← on it) to close the
+folder; a closed folder shows how many items it holds. **Collapse All** closes every folder,
+leaving the top-level list; **Expand All** opens everything. What you leave closed stays closed
+the next time you open the file. ← on a file selects the folder it is in.
+
+### Previewing a file
+
+Select a file and press **Space**: the file is shown in a Quick Look panel, as in Finder,
+without opening it in its own app. Press Space again (or Esc) to close it. With the preview
+open, ↑ and ↓ move through the binder and the preview follows.
+
+### Bringing files in from Finder
+
+Drag one or more files from a Finder window or the Desktop and **drop them on a folder** in
+the Binder screen. Dropping on a file adds to the folder that file is in.
+
+![Adding files to the binder](images/binder-add.png)
+
+A window asks how to number them, and shows the names they will have:
+
+- **The next index in this folder** is the default: `4000.05`, `4000.06`… in the order the
+  files were dropped.
+- **This index** (or **Starting at**): a number you type. If it is taken, the file that has it,
+  and any that follow it without a gap, move up to make room; the list shows each rename.
+  Dropping the files just above or below an indexed file fills this in with that spot's number.
+- **No index**: the files keep their names.
+
+A number a file arrives with (`2000.09 Old.pdf`) is replaced by the new one. Folders that are
+dropped come in under their own names. **Files are moved** into the binder, as Finder moves
+them; tick **Leave the originals where they are** to copy instead (the choice is remembered).
+Nothing is overwritten: if a file of the same name is already there, nothing is added and a
+message says so. **Cancel** adds nothing. ⌘Z takes an add back: a moved file returns to where
+it came from, a copy goes to the Trash, and files that made room get their numbers back.
+
+Files dropped below the last row, on no folder, land beside the trial balance and are flagged
+*not filed* until you file them.
+
+### Dragging to move and renumber
+
+Drag a file to a new place in the list. A line shows where it will go: **above** a file,
+**below** a file, or the row lights up when you are **on** it. Nothing changes when you let go:
+
+![Confirming a move](images/binder-move.png)
+
+a window says what the move does, lists every file that will be renamed, and waits for
+**Renumber** (or **Move**). **Cancel**, or closing the window, leaves everything as it was.
+
+| Let go… | What happens |
+|---|---|
+| **Above or below a file in the same folder** | The file goes there, and the files between its old place and its new one are renumbered. The folder keeps the same run of numbers, gaps included. |
+| **Above or below a file in another folder** (or dragging a file that has no index) | The file moves to that folder and takes the number at that spot. The file that had it, and any that follow it without a gap, move up by one. |
+| **On a file** | The dragged file takes that file's index and place. The other file stays in the folder and **becomes unindexed**. |
+| **On a placeholder** | The same, with a box, ticked to start with: **Move the placeholder to the Trash**. With it ticked, the placeholder goes to the Trash and journal entries that referred to the placeholder refer to the real document instead. |
+| **On a folder** | The file is filed in that folder with the folder's next index. |
+| **Beside a file with no index** | There is no number to take, so the file gets the folder's next index. |
+
+No two files ever end up with the same index. Folders are not dragged; change a folder's
+number with Set Index….
+
+### Signing off workpapers
+
+Every file has three marks at the right of its row: **P** (prepared), **R** (reviewed) and
+**2R** (second reviewed).
+
+- **Click an empty mark to sign it off as yourself.** It turns green and shows your initials
+  and the date: `P JA 11/18/26`. Hover over it for the full record.
+- What is recorded with each mark: **your name and login on the Mac, the Mac's name, the Mac's
+  hardware identifier** (the same for every user of that machine, and unchanged if it is
+  renamed), **the date and time**, and a **fingerprint of the file's contents** (SHA-256).
+- **A mark turns orange if the file changes afterwards.** The fingerprint no longer matches, so
+  what is in the binder is not what was looked at. The alert at the top counts these. Click the
+  mark to **Mark Again** (signing the file as it is now), remove the mark, or leave it.
+- **Click a green mark to take it off.** You are shown who made it and when, and asked to
+  confirm.
+- Marks **follow the file** when it is renumbered, renamed or moved in the Binder screen.
+- Any of the three can be made in any order and by anyone using the file; the record says who.
+- Placeholders and folders have no marks.
+- Every mark made or removed is a line in the change log, so a removed mark is not a lost one
+  ([section 14](#14-saving-undo-backups-and-the-data-check)).
+
+Sign-offs are stored in the trial balance file, not on the workpaper, so they do not depend on
+Finder tags. The **Workpaper Sign-offs** report lists them
+([section 13](#13-reports-and-exports)). They do **not** roll forward: next year's binder
+starts with nothing signed off.
 
 ### Adding and changing indexes
 
@@ -778,9 +1007,10 @@ The **Index** menu and the right-click menu also have:
 - **File In** / **Move To**: moves a file into a folder and gives it that folder's next index.
   This is how a loose file is filed.
 
-**Renames are real.** These rename and move the files on disk. Workpapers linked to journal
-entries keep their links through every rename and move. ⌘Z puts the names back. A rename is
-refused, with nothing changed, if a file of the target name is already there.
+**Renames are real.** These, and the drags above, rename and move the files on disk. Journal
+entry references and sign-offs follow every rename and move. ⌘Z puts the names back. A rename
+is refused, with nothing changed, if a file of the target name is already there. Each one is a
+line in the change log, listing every file renamed.
 
 ## 12. Prior years and rolling forward
 
@@ -853,15 +1083,24 @@ each file has a choice:
 | Choice | In next year's binder |
 |---|---|
 | **Roll forward** (the default) | The file is copied, under the same name and index. **Its Finder tags are not copied**, so nothing arrives looking already reviewed. |
-| **Placeholder only** | An empty text file is left in its place, named after the file with "(placeholder)" added: `2000.02 GL.xlsx (placeholder).txt`. It keeps the index. Its only content is the path of this year's file. |
+| **Placeholder only** | An empty text file is left in its place. It keeps the index, then has `(PLACEHOLDER)`, then the file's own name, then `.txt`: `4000.03 Bank statement.pdf` becomes `4000.03 (PLACEHOLDER) Bank statement.pdf.txt`. Its only content is the path of this year's file. |
 | **Don't roll forward** (unticked) | Nothing. |
 
 - A **folder** that is ticked is created, with its index number, even if it ends up empty.
   Unticking a folder leaves out everything inside it. **Everything Inside** sets every file in
   a folder at once, and **Set Every File** sets the whole binder.
 - **Index numbers roll forward** as they are, on folders, files and placeholders.
-- A **placeholder that was never replaced** stays a placeholder next time, without gaining a
-  second "(placeholder)", and keeps a note of where the real document last was.
+- A **placeholder that was never replaced** stays a placeholder next time, under the same
+  name, and keeps a note of where the real document last was. (Placeholders made before
+  version 1.5 were named `… (placeholder).txt`; they are still recognised, and take the present
+  name the next time they roll forward.)
+- **When the document arrives**, drag it onto its placeholder in the Binder screen: it takes
+  the placeholder's index, and the placeholder goes to the Trash ([section 11](#11-the-binder)).
+- If entries' references roll forward (*Carry workpaper links on entries that roll forward*), a reference to a document that became
+  a placeholder points at the placeholder, and moves to the real document when it replaces it.
+- **Sign-offs do not roll forward**, and next year's file starts its **own change log**, whose
+  first line records the roll forward.
+- The binder layout in the app's settings is not used: next year's folders are this year's.
 - The trial balance file itself, `TB Backups`, and hidden files are never part of the binder.
 - Nothing already in the destination is overwritten. Items that are already there are left as
   they are and counted in the message at the end.
@@ -880,10 +1119,12 @@ and how many placeholders were left, and offers to open the new year's file.
 | Consolidating Trial Balance | Every account, one column per trial balance, then Combined, Eliminations, Consolidated. |
 | Grouping Summary | The consolidation rolled up to groupings, subgroups nested, net income at the bottom. |
 | Grouping Detail | The same, opened to the accounts. |
-| Single Trial Balance | One trial balance with all its columns. |
-| Journal Entries | One row per journal line, with the entry's number, type, date, description, linked files and next-year setting. Can be limited to one type. |
+| Single Trial Balance | One trial balance with all its columns. Tick **By grouping** to lay the accounts out under their groupings and subgroups, with a total for each. |
+| Journal Entries | One row per journal line, with the entry's number, type, date, description, referenced files (with the tab and cells of a workbook) and next-year setting. Can be limited to one type. |
 | Data (Long Format) | One row per trial balance and account, with every column. Made for pivot tables, charts, or handing to another tool. |
 | Chart of Accounts | Accounts with types, grouping and subgroup, and which trial balances use them. |
+| Workpaper Sign-offs | One row per signed-off workpaper: its index, name and folder, then who marked it prepared, reviewed and second reviewed, and when. |
+| Change Log | Every line of the change log: when, the action, what changed, and the person's name, login, Mac and device identifier. |
 
 Controls appear as they apply: Book / Tax, the trial balance, the entry type, Prior Periods,
 Hide zero rows. Double-click a row to open the entry, the account's activity, or the grouping's
@@ -901,7 +1142,8 @@ Like the other balance screens, the reports include an entry that is being typed
 - **Excel**, **CSV**, **JSON**, **Copy** on the Reports screen export the report shown.
 - **Export Full Workbook…** (⇧⌘E) writes one Excel workbook with every report as a sheet:
   Consolidated, Consolidated (Tax) when there are tax-only entries, Groupings, Grouping Detail,
-  one sheet per trial balance, Journal Entries, Data, and Accounts.
+  one sheet per trial balance, Journal Entries, Data, and Accounts. (The sign-offs and the
+  change log are not in the workbook; export them on their own.)
 - **Quick Export** (⌘E) asks for a folder and writes two time-stamped files there: the full
   workbook and `… data.csv`, the long-format data.
 - The activity window and the grouping-accounts window have their own Copy and Export.
@@ -926,7 +1168,10 @@ plain signed numbers: debits positive, credits negative.
 **Saving.** There is no Save command. Every change is written to the JSON file as you make it.
 
 **Undo.** ⌘Z undoes any change to the file, from any window, back to when you opened it. ⇧⌘Z
-redoes. Changes to standard grouping lists in the app's settings are the exception.
+redoes. That includes renames, moves and adds in the binder, which are put back on disk.
+Changes to standard grouping lists and binder layouts in the app's settings are the exception,
+and so is a placeholder sent to the Trash (take it out of the Trash). Undo never removes
+anything from the change log: undoing a change adds a line that says so.
 
 **Backups.** The first time you change a file in a session, the file as it was is copied to a
 `TB Backups` folder beside it, with the date and time in its name. The 20 most recent are kept.
@@ -950,8 +1195,53 @@ counts the problems; click it to read them. It reports:
   issue however many there are);
 - a subgroup whose grouping is missing;
 - linked files that cannot be found, with a **Fix Links…** button;
-- in the binder: files sitting loose beside the trial balance, items with no index, and index
-  numbers used more than once, with an **Open Binder** button.
+- in the binder: files sitting loose beside the trial balance, items with no index, index
+  numbers used more than once, and workpapers changed or missing since they were signed off,
+  with an **Open Binder** button;
+- trial balances with **no activity number**, with a **Set…** button (counted as one issue
+  however many there are).
+
+### The change log
+
+![The change log](images/change-log.png)
+
+**Change Log** in the sidebar lists every change made to the file, newest first. Each line has:
+
+- **when**, in your Mac's time (the file stores it in UTC);
+- **what was done**: the same name the Edit menu's Undo shows, such as *Post AJE-3*, *Apply
+  Grouping*, *Set Index*, *Mark as Reviewed*;
+- **what it changed**, worked out by comparing the file before and after: the entry posted with
+  its amount, the accounts regrouped and from what to what, the balances that differ, the files
+  renamed, and so on;
+- **who**: the person's name, and under it the Mac. Hover for their login and the Mac's
+  hardware identifier.
+
+What is logged: everything that changes the file (imports, balances typed by hand, entries
+posted, changed and deleted, accounts and groupings, settings, activity numbers, sign-offs,
+prior years), everything the Binder screen does to the folder (renames, moves, files added,
+folders made), the file's creation, a roll forward, and changes made with `tbcli`. **Undo and
+redo are logged too**, as *Undo: …* and *Redo: …*; a line is never taken out.
+
+If the file is changed by something that does not write to the log (a text editor, a script)
+**while it is open in the app**, the app notices when it reads the file again and adds a line,
+*Changed outside TB Tool*, saying what is different. A change made while the file is not open
+in the app leaves no line: the app has nothing to compare it with.
+
+**Search** narrows the list to lines containing every word you type. **Export** writes the log,
+or the workpaper sign-offs, to Excel, CSV or JSON.
+
+**How far it can be trusted.** Each line carries a seal computed from its own contents and the
+seal of the line before it. If a line is edited, removed or inserted afterwards, the seals stop
+matching from that point: the screen says which line, and marks every line from there on.
+`tbcli log` and `tbcli check` report the same. This makes changes to the log **evident**; it
+does not make them impossible. The log lives in a file on your Mac, and someone with the file,
+the time and the knowledge could rewrite every seal. The names in it are those the Mac reports
+for whoever is logged in; the app does not ask for a password. For a record that has to stand
+up on its own, keep dated copies of the file where they cannot be changed (the `TB Backups`
+folder, a backup system, or a read-only archive at sign-off).
+
+A file made before version 1.5 has no log until its first change in this version; its earlier
+history is not known.
 
 ## 15. The JSON file
 
@@ -961,7 +1251,7 @@ compares cleanly in version control.
 ```json
 {
   "fileType": "trial-balance",
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "name": "Summit Storage",
   "periodEnd": "2026-12-31",
   "binder": { "clientNumber": "1042", "engagement": "2026 Tax Return", "entityType": "Partnership (Form 1065)",
@@ -982,11 +1272,22 @@ compares cleanly in version control.
       "createdAt": "…", "modifiedAt": "…",
       "lines": [ { "entity": "ashford", "account": "51100", "debit": 1918.76, "credit": 0.00, "memo": "" },
                  { "entity": "ashford", "account": "24100", "debit": 0.00, "credit": 1918.76, "memo": "" } ],
-      "references": [ { "path": "Workpapers/Mortgage interest accrual.xlsx", "note": "tab 2" } ] }
+      "references": [ { "path": "3000 Standard Workpapers/3000.01 Mortgage interest accrual.xlsx", "note": "",
+                        "sheet": "Accrual", "cells": "B4:D10" },
+                      { "path": "4000 Support/4000.02 Bank statement - Ashford.pdf", "note": "page 3" } ] }
   ],
   "accounts":  [ { "id": "10001", "number": "10001", "name": "Ashford Checking", "type": "asset", "grouping": "L01" } ],
   "groupings": [ { "id": "815", "code": "815", "name": "OTHER", "section": "8825 Accounts", "type": "expense" },
-                 { "id": "815-MGMT", "code": "", "name": "MANAGEMENT FEES", "section": "8825 Accounts", "parent": "815" } ]
+                 { "id": "815-MGMT", "code": "", "name": "MANAGEMENT FEES", "section": "8825 Accounts", "parent": "815" } ],
+  "signOffs": [
+    { "path": "2000 Client Financials/2000.01 Ashford Trial Balance.csv", "level": "prepared", "at": "2026-11-18T16:34:10Z",
+      "by": { "name": "Jordan Avery", "account": "javery", "computer": "Jordan’s MacBook Pro", "device": "00000000-0000-4000-8000-000000000001" },
+      "fileHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" } ],
+  "auditLog": [
+    { "at": "2026-11-17T11:24:00Z", "action": "Post AJE-1",
+      "details": ["Posted AJE-1 (adjusting, Ashford): Accrue December mortgage interest — debits 1,918.76"],
+      "by": { "name": "Jordan Avery", "account": "javery", "computer": "Jordan’s MacBook Pro", "device": "00000000-0000-4000-8000-000000000001" },
+      "hash": "5d1f…" } ]
 }
 ```
 
@@ -997,7 +1298,7 @@ compares cleanly in version control.
 | Field | Meaning |
 |---|---|
 | `fileType` | Always `"trial-balance"`. The app refuses a JSON file without it. |
-| `schemaVersion` | `4`. Files with 1, 2 or 3 open and are saved as 4 on the next change. A higher number than the app knows is refused. |
+| `schemaVersion` | `5`. Files with 1 to 4 open and are saved as 5 on the next change. A higher number than the app knows is refused. |
 | `name` | The client name. Heads every report. |
 | `periodEnd` | The year end, `YYYY-MM-DD`. Its year is the current year. |
 | `binder` | `clientNumber`, `engagement`, `entityType`, `taxID`, `firm`, `preparedBy`, `reviewedBy`. All text. |
@@ -1007,6 +1308,8 @@ compares cleanly in version control.
 | `journalEntries` | The entries. |
 | `accounts` | The shared chart. |
 | `groupings` | The file's grouping list. |
+| `signOffs` | Optional. Workpapers marked prepared, reviewed or second reviewed. |
+| `auditLog` | Optional. The change log, oldest first. |
 
 Top-level fields the app does not know are kept when it saves. Unknown fields nested inside
 entities, entries, accounts or groupings are not.
@@ -1036,7 +1339,7 @@ entities, entries, accounts or groupings are not.
 | `pending` | Optional, `true` for an entry rolled forward without amounts and not yet completed. A pending entry posts nothing. |
 | `createdAt`, `modifiedAt` | Timestamps. |
 | `lines` | `entity` (a trial balance id), `account` (an account id), `debit`, `credit`, `memo`. |
-| `references` | Linked files: `path` and `note`. A path is relative to the JSON file's folder when the file is inside it, otherwise absolute. |
+| `references` | Referenced files: `path` and `note`, and for a workbook `sheet` (the tab) and optionally `cells` (`B4:D10`). A path is relative to the JSON file's folder when the file is inside it, otherwise absolute. |
 
 **An account**
 
@@ -1057,10 +1360,30 @@ entities, entries, accounts or groupings are not.
 | `parent` | Optional. On a subgroup, the id of its grouping. |
 | `type` | Optional. The account type of every account in the grouping: `asset`, `liability`, `equity`, `revenue` or `expense`. Left out for "any type", and on a subgroup (which uses its grouping's). In a file older than version 4, groupings from the built-in list take the built-in types when the file is opened. |
 
+**A sign-off**
+
+| Field | Meaning |
+|---|---|
+| `path` | The workpaper, relative to the JSON file's folder. |
+| `level` | `prepared`, `reviewed`, or `second-reviewed`. One of each per workpaper. |
+| `at` | When, in UTC. |
+| `by` | Who: `name` (the person's name on the Mac), `account` (their login), `computer` (the Mac's name), `device` (the Mac's hardware UUID). |
+| `fileHash` | The SHA-256 of the workpaper's contents when it was marked. The mark is shown as out of date when the file no longer matches. |
+
+**A line of the change log**
+
+| Field | Meaning |
+|---|---|
+| `at` | When, in UTC. |
+| `action` | What was done ("Post AJE-1", "Undo: Set Index", "Import Ashford (tbcli)"). |
+| `details` | Lines of text saying what changed. |
+| `by` | Who, as on a sign-off. |
+| `hash` | The seal: the SHA-256, in hex, of the previous line's `hash` (empty for the first line), then `at`, `action`, each of `details`, and `by`'s `name`, `account`, `computer` and `device`, in that order, joined by the unit-separator character (U+001F) and encoded as UTF-8. A line whose `hash` is not what this gives marks where the log was altered. |
+
 ### What is and is not stored
 
 Only source data is stored: imported balances, journal entries, the chart and the grouping
-list. Adjusted, final, tax and consolidated figures are **not** in the file. They are computed
+list, with the sign-offs and the change log beside them. Adjusted, final, tax and consolidated figures are **not** in the file. They are computed
 each time, so they cannot drift from the entries.
 
 ### Related files
@@ -1069,6 +1392,10 @@ each time, so they cannot drift from the entries.
   "entityTypes": […], "groupings": […] }`, with groupings as above.
 - **A chart of accounts**: `{ "fileType": "chart-of-accounts", "schemaVersion": 2, "name": …,
   "exportedAt": …, "accounts": [ { "number", "name", "type", "grouping" } ], "groupings": […] }`.
+- **The binder layouts**: `{ "fileType": "tb-tool-binder-layouts", "schemaVersion": 1,
+  "folders": [ { "name": "5000 Permanent Files", "folders": [ { "name": "5010 PY Tax Returns" } ] } ],
+  "byEntityType": { "Nonprofit (Form 990)": { "folders": […] } } }`. `folders` is the layout for
+  every entity type; `byEntityType` holds the types that have their own.
 
 ## 16. The command line
 
@@ -1088,6 +1415,7 @@ tbcli post <file.json> <entry.json>
 tbcli links <file.json>
 tbcli rollforward <file.json> <next-year.json> [--carry-balance-sheet <equity account>] [--binder]
 tbcli check <file.json>
+tbcli log <file.json>
 tbcli summary <file.json>
 tbcli export <file.json> <out.xlsx | out.csv>
 ```
@@ -1101,8 +1429,9 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | `groupings-export` / `groupings-import` | The grouping list. Import replaces the list unless `--merge`. |
 | `post` | Posts one journal entry from a JSON file. It is refused, with every reason, if it breaks a posting rule. |
 | `links` | Lists linked files that cannot be found. Exits with status 2 if there are any. |
-| `rollforward` | Writes next year's file. The source is unchanged. With `--binder`, the folders and files beside the source are rolled into the new file's folder too: every file copied without its Finder tags, placeholders kept as placeholders, nothing overwritten. |
-| `check` | Lists every data-check problem, or says the file is clean. Also says how many accounts aren't grouped, and what in the binder is loose, unindexed or numbered twice. |
+| `rollforward` | Writes next year's file. The source is unchanged. With `--binder`, the folders and files beside the source are rolled into the new file's folder too: every file copied without its Finder tags, placeholders kept as placeholders, nothing overwritten. Sign-offs are not carried, and the new file starts its own change log. |
+| `check` | Lists every data-check problem, or says the file is clean. Also says how many accounts aren't grouped, what in the binder is loose, unindexed or numbered twice, which trial balances have no activity number, and whether the change log has been altered. |
+| `log` | Prints the change log: when, the action, who and on which Mac, and what changed. Exits with status 2 if a line does not follow from the one before it. |
 | `summary` | Balance check and net income per trial balance (with its activity number, and anything reclassified to or from other trial balances) and consolidated. |
 | `export` | `.xlsx` writes the full workbook; `.csv` writes the long-format data. |
 
@@ -1118,12 +1447,17 @@ tbcli export <file.json> <out.xlsx | out.csv>
     { "entity": "Ashford", "account": "32000", "debit": 181441.23, "memo": "Subsidiary equity" },
     { "entity": "Parent",  "account": "16100", "credit": 181441.23 }
   ],
-  "references": [ { "path": "Workpapers/Investment rollforward.xlsx", "note": "tab 2" } ]
+  "references": [ { "path": "3000 Standard Workpapers/3000.04 Investment rollforward.xlsx", "note": "", "sheet": "Rollforward", "cells": "B4:F12" } ]
 }
 ```
 
 `number` may be left out (the next number for the type is used), as may `date` (the year end is
-used) and `rollForward`. A line's `entity` may be the trial balance's id or its name.
+used) and `rollForward`. A line's `entity` may be the trial balance's id or its name. A
+reference's `sheet` and `cells` are optional here; the app asks for the tab when the entry is
+next edited.
+
+**Every command that changes a file adds a line to its change log**, marked "(tbcli)", with the
+name, login and Mac of whoever ran it and what the command changed.
 
 ## 17. Menus and shortcuts
 
@@ -1131,7 +1465,7 @@ used) and `rollForward`. A line's `entity` may be the trial balance's id or its 
 
 | Item | Shortcut | |
 |---|---|---|
-| Settings… | ⌘, | The app's settings: new-file defaults and standard grouping lists. |
+| Settings… | ⌘, | The app's settings: new-file defaults, standard grouping lists, and the binder layout. |
 
 **File**
 
@@ -1169,7 +1503,13 @@ used) and `rollForward`. A line's `entity` may be the trial balance's id or its 
 Cancel Esc. In an account field: ↑ ↓ to move through matches, Return or Tab to pick, Esc to
 close the list.
 
+**In the reference field of an entry:** type an index or part of a file name; ↑ ↓ to move
+through the binder's indexed files, Return or Tab to add the highlighted one, Esc to close.
+
 **On the Accounts screen:** Apply Grouping… ⌘G.
+
+**On the Binder screen:** Space previews the selected file and closes the preview; ↑ ↓ move
+through the list; ← closes a folder (or goes to the folder a file is in); → opens a folder.
 
 **Toolbar:** New Entry (menu of the four types), Import (click to import files; the arrow
 offers Paste, New Blank Trial Balance, Import Chart of Accounts, Import Grouping List), Quick
@@ -1182,10 +1522,13 @@ Export, Roll Forward, Trial Balance Settings.
 | An engagement | Its `.json` file, wherever you put it. |
 | Backups | `TB Backups/` beside the file. |
 | Standard grouping lists | `~/Library/Application Support/TB Tool/Grouping Lists/`, one JSON file per list. The built-in list appears there only once you change it. |
+| Binder layouts | `~/Library/Application Support/TB Tool/Binder Layouts.json`. It appears only once you change the layout. |
 | Saved import layouts | `~/Library/Application Support/TB Tool/import-layouts.json` |
-| Saved filters, column layouts, window positions, view choices, new-file defaults | The app's preferences. |
+| Workpaper sign-offs and the change log | In the engagement's `.json` file. |
+| Saved filters, column layouts, window positions, view choices, which binder folders are closed, new-file defaults | The app's preferences. |
 
-Nothing is sent anywhere.
+Nothing is sent anywhere. The one time TB Tool talks to another app is when you open a
+workbook reference: it asks Excel, on your Mac, to go to a tab and select cells.
 
 ## 19. For AI assistants and scripts
 
@@ -1219,6 +1562,16 @@ on one, these are the things to get right.
 - If you edit the JSON directly: never store a computed balance; keep `debit` and `credit` as
   two-decimal numbers with one of them zero; refer to trial balances and accounts by `id`; give
   a new entry a unique `id` and `number`; keep codes unique in `groupings`.
+- **Leave `auditLog` and `signOffs` alone.** Do not edit, reorder or remove their entries:
+  each log line is sealed to the one before it, and a change shows as a broken log. You do not
+  need to add a line for your own edit. If the file is open in the app when you change it, the
+  app adds a line itself (*Changed outside TB Tool*) listing what is different; if it is not,
+  your edit is not in the log, so say what you changed. `tbcli` commands add their own line,
+  which is one more reason to prefer them.
+- A reference to a workbook should carry `sheet` (the tab's exact name) and may carry `cells`.
+  Reference paths are relative to the JSON file's folder; use the file's current indexed name.
+- Do not rename workpapers on disk without updating `references[].path` and `signOffs[].path`
+  to match. The app's Binder screen does both.
 - Run `tbcli check file.json` afterwards. It lists everything the app's data check would.
 - The app picks up outside changes when it next comes to the front, and keeps a backup of the
   version it replaces.
@@ -1230,7 +1583,9 @@ on one, these are the things to get right.
 3. Only a `reclassifying` or an `eliminating` entry may name more than one trial balance.
 4. Account ids, trial balance ids, grouping ids and grouping codes are each unique.
 5. A subgroup's `parent` is a grouping that is not itself a subgroup.
-6. An account's type is its grouping's `type` (for a subgroup, its parent's) whenever the
+6. Each trial balance should have an `activityNumber`, and no two share one. A missing one is
+   flagged, not refused.
+7. An account's type is its grouping's `type` (for a subgroup, its parent's) whenever the
    grouping has one. Don't set `type` on a grouped account: set its `grouping`. The app and
    `tbcli` rewrite a grouped account's `type` to match whenever they open the file.
 
@@ -1257,7 +1612,33 @@ the revenue and expense accounts.
 **An account I need is not in the list.** New Account… in the entry window, the balance editor
 or the Accounts screen's Chart menu.
 
-**A linked file shows as missing.** Fix Links… on the Journal Entries screen.
+**A linked file shows as missing.** Fix Links… on the Journal Entries screen. Or open the
+entry, remove the reference, and pick the file again from the binder's list.
+
+**A workpaper isn't in the reference list.** Only indexed files are offered. Give it an index
+on the Binder screen.
+
+**The entry won't post: "Choose the tab…".** A reference to a workbook has to name a tab.
+Choose it from the menu beside the reference, even if the workbook has only one.
+
+**The workbook opened, but not on the tab.** The status line says why. Usually macOS has not
+been told that TB Tool may control Excel: System Settings ▸ Privacy & Security ▸ Automation ▸
+TB Tool ▸ turn on Microsoft Excel. A tab that has since been renamed in the workbook also does
+it; the reference then shows the old name marked *not in the workbook*. Choose the tab again.
+
+**A trial balance says "No activity #".** Give it its activity number: click the orange button
+at the top of its screen, or right-click it in the sidebar ▸ Details….
+
+**A sign-off mark is orange.** The file changed after it was signed off. Click the mark to
+sign it again as it is now, or to remove the mark.
+
+**The change log says a line doesn't follow from the one before it.** The log in the JSON file
+was edited, or lines were removed or put in, by something other than TB Tool. Compare with a
+copy in `TB Backups`.
+
+**The binder folders weren't made for a new file.** The folder you saved it in already had
+folders, or is a general folder. Open the Binder screen of an empty binder and click **Make the
+Standard Folders**, or make them in Finder.
 
 **The data check mentions the binder.** Open Binder from the data check. File loose files with
 right-click ▸ File In, index what has no index with Index ▸ Index Every Unindexed File, and

@@ -10,6 +10,12 @@ struct AccountSearchField: NSViewRepresentable {
     var accounts: [Account]
     @Binding var accountID: String?
     var placeholder = "Type an account number or name"
+    /// What the list shows on the right of each row. The account's type unless given.
+    var detail: ((Account) -> String)? = nil
+    /// Keep the matches in the order of `accounts` instead of putting the closest first.
+    var keepOrder = false
+    /// With this, the field is a picker that adds: choosing calls it and empties the field for the next one.
+    var onChoose: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -68,6 +74,13 @@ struct AccountSearchField: NSViewRepresentable {
         }
 
         private func choose(_ account: Account) {
+            if let onChoose = parent.onChoose {
+                field?.stringValue = ""
+                shownID = nil
+                hideList()
+                onChoose(account.id)
+                return
+            }
             field?.stringValue = account.display
             set(account.id)
             hideList()
@@ -86,7 +99,11 @@ struct AccountSearchField: NSViewRepresentable {
 
         private func refresh(_ text: String) {
             terms = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
-            matches = Engagement.searchAccounts(parent.accounts, text, limit: 300)
+            if parent.keepOrder {
+                matches = Array(parent.accounts.lazy.filter { a in let d = a.display.lowercased(); return self.terms.allSatisfy { d.contains($0) } }.prefix(500))
+            } else {
+                matches = Engagement.searchAccounts(parent.accounts, text, limit: 300)
+            }
             guard !matches.isEmpty else {
                 hideList()
                 return
@@ -205,7 +222,7 @@ struct AccountSearchField: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             let id = NSUserInterfaceItemIdentifier("suggestion")
             let cell = (tableView.makeView(withIdentifier: id, owner: nil) as? SuggestionCell) ?? SuggestionCell(identifier: id)
-            if row < matches.count { cell.configure(matches[row], terms: terms) }
+            if row < matches.count { cell.configure(matches[row], terms: terms, detail: parent.detail?(matches[row])) }
             return cell
         }
 
@@ -250,6 +267,10 @@ struct AccountSearchField: NSViewRepresentable {
         func controlTextDidEndEditing(_ notification: Notification) {
             hideList()
             guard let field else { return }
+            if parent.onChoose != nil {
+                field.stringValue = ""
+                return
+            }
             let text = field.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
             guard !text.isEmpty else {
                 set(nil)
@@ -310,6 +331,7 @@ private final class SuggestionCell: NSTableCellView {
     private let kind = NSTextField(labelWithString: "")
     private var account: Account?
     private var terms: [String] = []
+    private var detail: String?
     private var selected = false
 
     init(identifier: NSUserInterfaceItemIdentifier) {
@@ -335,9 +357,10 @@ private final class SuggestionCell: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ account: Account, terms: [String]) {
+    func configure(_ account: Account, terms: [String], detail: String? = nil) {
         self.account = account
         self.terms = terms
+        self.detail = detail
         render()
     }
 
@@ -369,7 +392,7 @@ private final class SuggestionCell: NSTableCellView {
             }
         }
         label.attributedStringValue = text
-        kind.stringValue = account.type.label
+        kind.stringValue = detail ?? account.type.label
         kind.textColor = secondary
     }
 }

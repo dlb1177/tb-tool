@@ -374,7 +374,7 @@ final class TBCoreTests: XCTestCase {
         XCTAssertEqual(back, e)
         XCTAssertEqual(Store.encode(back), data)
         let text = String(data: data, encoding: .utf8)!
-        XCTAssertTrue(text.hasPrefix("{\n  \"fileType\": \"trial-balance\",\n  \"schemaVersion\": 4,"))
+        XCTAssertTrue(text.hasPrefix("{\n  \"fileType\": \"trial-balance\",\n  \"schemaVersion\": 5,"))
         XCTAssertTrue(text.contains("{ \"account\": \"10001\", \"debit\": 12643.59, \"credit\": 0.00 }"))
         // Any standard JSON parser can read it.
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: data))
