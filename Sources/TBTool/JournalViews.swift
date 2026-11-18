@@ -110,19 +110,19 @@ struct JournalListView: View {
                 } else {
                     Table(entries, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columnLayout) {
                         TableColumn("Entry", value: \.number, comparator: .localizedStandard) { r in Text(r.number).fontWeight(.medium) }
-                            .width(min: 60, ideal: 70, max: 110)
+                            .width(min: 36, ideal: 70)
                             .customizationID("entry")
                         TableColumn("Type", value: \.type) { r in Text(r.type) }
-                            .width(min: 80, ideal: 100, max: 130)
+                            .width(min: 36, ideal: 100)
                             .customizationID("type")
                         TableColumn("Date", value: \.date) { r in Text(r.date).monospacedDigit() }
-                            .width(min: 80, ideal: 90, max: 110)
+                            .width(min: 36, ideal: 90)
                             .customizationID("date")
                         TableColumn("Trial Balance", value: \.entities, comparator: .localizedStandard) { r in Text(r.entities) }
-                            .width(min: 100, ideal: 170)
+                            .width(min: 36, ideal: 170)
                             .customizationID("trial-balance")
                         TableColumn("Description", value: \.description, comparator: .localizedStandard) { r in Text(r.description) }
-                            .width(min: 160, ideal: 300)
+                            .width(min: 36, ideal: 300)
                             .customizationID("description")
                         TableColumn("Amount", value: \.amount) { r in
                             if r.status == "Posted" {
@@ -131,7 +131,7 @@ struct JournalListView: View {
                                 Text("needs amounts").foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .trailing)
                             }
                         }
-                        .width(min: 90, ideal: 120, max: 170)
+                        .width(min: 36, ideal: 120)
                         .customizationID("amount")
                         TableColumn("Files", value: \.files) { r in
                             if r.broken > 0 {
@@ -142,12 +142,17 @@ struct JournalListView: View {
                                 Label("\(r.files)", systemImage: "paperclip").foregroundStyle(.secondary)
                             }
                         }
-                        .width(min: 54, ideal: 96, max: 130)
+                        .width(min: 36, ideal: 96)
                         .customizationID("files")
                         TableColumn("Next Year", value: \.roll) { r in Text(r.roll).foregroundStyle(.secondary) }
-                            .width(min: 70, ideal: 120, max: 150)
+                            .width(min: 36, ideal: 120)
                             .customizationID("next-year")
                     }
+                    .background(TableColumnFitter(key: "journal", contents: [
+                        "Entry": entries.map(\.number), "Type": entries.map(\.type), "Date": entries.map(\.date), "Trial Balance": entries.map(\.entities),
+                        "Description": entries.map(\.description), "Amount": entries.map { $0.status == "Posted" ? Money(cents: $0.amount).grouped : "needs amounts" },
+                        "Files": ["0 missing"], "Next Year": entries.map(\.roll),
+                    ], extra: ["Files": 22]))
                     .contextMenu(forSelectionType: String.self) { ids in
                         if ids.count == 1, let id = ids.first {
                             Button("Edit") { model.editEntry(id) }

@@ -384,6 +384,49 @@ public enum BinderIndexer {
         return ordered(out)
     }
 
+    /// Indexes the files among `paths` that have no index, each with the next free number of the
+    /// folder it is in, in the order the binder lists them. Files that already have an index,
+    /// loose files beside the trial balance, and files in a folder with no number are left.
+    public static func index(_ paths: Set<String>, in tree: BinderTree) -> [BinderRename] {
+        var taken: [String: Int] = [:]
+        var out: [BinderRename] = []
+        for item in tree.all where paths.contains(item.path) && !item.isFolder && item.index == nil && !item.parentPath.isEmpty {
+            guard let index = nextFileIndex(in: item.parentPath, tree: tree, taking: taken[item.parentPath, default: 0]),
+                  let r = rename(item, to: index) else { continue }
+            out.append(r)
+            taken[item.parentPath, default: 0] += 1
+        }
+        return ordered(out)
+    }
+
+    /// A number for a new folder made inside `parentPath` ("" for the top of the binder). At the
+    /// top it is the next thousand after the highest folder there (5000 → 6000); inside a folder
+    /// it is ten past the highest folder beside it, or past the folder's own number (5030 → 5040).
+    public static func newFolderIndex(in parentPath: String, tree: BinderTree) -> BinderIndex? {
+        let siblings = tree.children(of: parentPath).filter(\.isFolder).compactMap { $0.index }
+        let numbers = siblings.compactMap { Int($0.prefix) }
+        let parent = tree.item(parentPath)?.index
+        let top = parentPath.isEmpty
+        if !top && parent == nil && numbers.isEmpty { return nil }
+        let width = siblings.map(\.prefix.count).max() ?? parent?.prefix.count ?? 4
+        let step = top ? 1000 : 10
+        var n = numbers.max() ?? parent.flatMap { Int($0.prefix) } ?? 0
+        n = top ? (n / step + 1) * step : n + step
+        while holder(of: BinderIndex(prefix: pad(n, width)), isFolder: true, in: tree) != nil { n += step }
+        return BinderIndex(prefix: pad(n, width))
+    }
+
+    /// The name an item has after its title is changed: the index stays in front.
+    public static func retitle(_ path: String, to title: String, in tree: BinderTree) -> [BinderRename] {
+        guard let item = tree.item(path) else { return [] }
+        let clean = title.trimmed
+        guard !clean.isEmpty, !clean.contains("/"), !clean.contains(":") else { return [] }
+        let name = item.index.map { $0.text + " " + clean } ?? clean
+        guard name != item.name else { return [] }
+        let parent = item.parentPath
+        return [BinderRename(from: path, to: parent.isEmpty ? name : parent + "/" + name, isFolder: item.isFolder)]
+    }
+
     /// Renumbers a folder's indexed files 01, 02, 03… in their present order, closing any gaps.
     public static func closeGaps(in folderPath: String, tree: BinderTree) -> [BinderRename] {
         guard let folder = tree.item(folderPath), let prefix = folder.index?.prefix else { return [] }
@@ -402,6 +445,8 @@ public enum BinderIndexer {
 
     /// What dragging a file to a new place does, as renames; nothing is changed here.
     ///
+    /// - Above or below a file where a number is free between the two files at that spot: it
+    ///   takes the first free number there, and nothing else is renamed.
     /// - Above or below a file in the same run of numbers: the files change places and the run
     ///   keeps the numbers it had, so only the files between the two spots are renumbered.
     /// - Above or below a file from somewhere else (another folder, or with no index): it takes
@@ -424,6 +469,18 @@ public enum BinderIndexer {
         let run = tree.files.filter { $0.index?.prefix == at.prefix }
             .sorted { ($0.index!.suffix ?? 0, $0.path) < ($1.index!.suffix ?? 0, $1.path) }
 
+        // A free number between the file above the spot and the file below it: take it, and
+        // nothing else has to be renumbered.
+        let others = run.filter { $0.path != path }
+        if let at0 = others.firstIndex(where: { $0.path == target.path }) {
+            let spot = below ? at0 + 1 : at0
+            let above = spot > 0 ? (others[spot - 1].index!.suffix ?? 0) : 0
+            if spot < others.count, let under = others[spot].index!.suffix, under - above > 1 {
+                let free = BinderIndex(prefix: at.prefix, suffix: above + 1, width: max(at.width, String(above + 1).count))
+                return [rename(item, to: free, in: folder)].compactMap { $0 }
+            }
+        }
+
         if item.index?.prefix == at.prefix {
             // Same run: the numbers stay, the files change places.
             var order = run.filter { $0.path != path }
@@ -445,6 +502,19 @@ public enum BinderIndexer {
             inTheWay = holder(of: slot, isFolder: false, in: tree, except: path).flatMap { moved.contains($0.path) ? nil : $0 }
         }
         return ordered(out)
+    }
+
+    /// The free number at a spot between two files, if there is one: where a file let go there
+    /// can land without anything being renumbered.
+    public static func freeIndex(at drop: BinderDrop, in tree: BinderTree) -> BinderIndex? {
+        guard let target = tree.item(drop.target), !target.isFolder, let at = target.index, drop != .onto(target.path) else { return nil }
+        let run = tree.files.filter { $0.index?.prefix == at.prefix }
+            .sorted { ($0.index!.suffix ?? 0, $0.path) < ($1.index!.suffix ?? 0, $1.path) }
+        guard let at0 = run.firstIndex(where: { $0.path == target.path }) else { return nil }
+        let spot = drop == .after(target.path) ? at0 + 1 : at0
+        let above = spot > 0 ? (run[spot - 1].index!.suffix ?? 0) : 0
+        guard spot < run.count, let under = run[spot].index!.suffix, under - above > 1 else { return nil }
+        return BinderIndex(prefix: at.prefix, suffix: above + 1, width: max(at.width, String(above + 1).count))
     }
 
     /// Names for files being brought into a folder, numbered from `start` in the order given,

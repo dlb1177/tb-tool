@@ -913,34 +913,340 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Carries out a confirmed drag. With `trashing`, the placeholder a document took the place of goes to the Trash.
+    /// Carries out a drag.
     @discardableResult
-    func applyBinderMove(_ renames: [BinderRename], replacedPlaceholder: String? = nil, by newPath: String? = nil) -> Bool {
-        guard let folder else { return false }
-        guard applyBinderRenames(renames, actionName: "Move in Binder") else { return false }
-        if let old = replacedPlaceholder, let newPath {
-            // The document has arrived: links to the placeholder now point at it, and the placeholder goes to the Trash.
-            mutate("Replace Placeholder") { $0.relink(old, to: newPath) }
-            do {
-                try FileManager.default.trashItem(at: folder.appendingPathComponent(old), resultingItemURL: nil)
-                record("Placeholder Moved to the Trash", ["“\(old)” — “\(newPath)” took its place"])
-            } catch {
-                alert = AlertInfo(title: "The placeholder is still in the binder", message: error.localizedDescription)
-            }
-            refreshBinder()
-            refreshLinks()
+    func applyBinderMove(_ renames: [BinderRename]) -> Bool {
+        applyBinderRenames(renames, actionName: "Move in Binder")
+    }
+
+    // MARK: Placeholders
+
+    /// A document let go on a placeholder: asks whether it replaces the placeholder or is simply added.
+    func showReplacePlaceholder(_ source: PlaceholderArrival, placeholder: String) {
+        guard binder?.item(placeholder) != nil else { return }
+        Windows.shared.close("binder-placeholder")
+        Windows.shared.show("binder-placeholder", title: "Replace the Placeholder?", size: NSSize(width: 560, height: 300), minSize: NSSize(width: 520, height: 280)) {
+            ReplacePlaceholderView(source: source, placeholder: placeholder)
         }
+    }
+
+    /// The document takes the placeholder's index; the placeholder goes to the Trash, and journal
+    /// entries that referred to it refer to the document instead. With `replace` false the
+    /// document is only put in the placeholder's folder, with no index.
+    @discardableResult
+    func arrive(_ source: PlaceholderArrival, at placeholder: String, replace: Bool) -> Bool {
+        guard let folder, let tree = binder, let target = tree.item(placeholder) else { return false }
+        let home = target.parentPath
+        // Bring it into the folder first, under its own name.
+        var path: String
+        switch source {
+        case .inside(let p):
+            path = p
+            if !replace {
+                guard let item = tree.item(p), item.parentPath != home || item.index != nil else { return true }
+                let to = home.isEmpty ? item.title : home + "/" + item.title
+                return applyBinderRenames([BinderRename(from: p, to: to)], actionName: "Move in Binder")
+            }
+        case .outside(let url):
+            guard addToBinder([url], folderPath: home, start: nil, copy: UserDefaults.standard.bool(forKey: "binder.addCopies")) else { return false }
+            path = home.isEmpty ? url.lastPathComponent : home + "/" + url.lastPathComponent
+            if !replace { return true }
+        }
+        guard let now = binder else { return false }
+        let renames = BinderIndexer.move(path, .onto(placeholder), in: now)
+        guard !renames.isEmpty, applyBinderRenames(renames, actionName: "Replace Placeholder") else { return false }
+        let own = renames.first { $0.from == path }?.to ?? path
+        let left = renames.first { $0.from == placeholder }?.to ?? placeholder
+        mutate("Replace Placeholder") { $0.relink(left, to: own) }
+        do {
+            _ = try trash(folder.appendingPathComponent(left))
+            record("Placeholder Moved to the Trash", ["“\(placeholder)” — “\(own)” took its place"])
+        } catch {
+            alert = AlertInfo(title: "The placeholder is still in the binder", message: error.localizedDescription)
+        }
+        refreshBinder()
+        refreshLinks()
+        status = "“\((own as NSString).lastPathComponent)” took the placeholder's place"
         return true
+    }
+
+    /// A small question with one or two things to type. Nil when cancelled.
+    private func ask(_ title: String, _ message: String, fields: [(label: String, value: String, hint: String)], button: String) -> [String]? {
+        guard !quiet else { return nil }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        var inputs: [NSTextField] = []
+        for f in fields {
+            let label = NSTextField(labelWithString: f.label)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            label.textColor = .secondaryLabelColor
+            let input = NSTextField(string: f.value)
+            input.placeholderString = f.hint
+            input.translatesAutoresizingMaskIntoConstraints = false
+            input.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            stack.addArrangedSubview(label)
+            stack.addArrangedSubview(input)
+            stack.setCustomSpacing(2, after: label)
+            inputs.append(input)
+        }
+        stack.setFrameSize(stack.fittingSize)
+        alert.accessoryView = stack
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = inputs.last
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return inputs.map { $0.stringValue.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// Makes an empty placeholder for a document that hasn't arrived, in a binder folder.
+    func newPlaceholder(in folderPath: String) {
+        guard let tree = binder, let home = tree.item(folderPath), home.isFolder else { return }
+        let next = BinderIndexer.nextFileIndex(in: folderPath, tree: tree)
+        guard let answers = ask("New Placeholder in “\(home.name)”",
+                                "A placeholder holds a document's place, and its index, until the document arrives. Drag the document onto it then.",
+                                fields: [("Index (leave empty for none)", next?.text ?? "", "e.g. 4000.05"), ("The document it stands for", "", "e.g. Bank statement - December.pdf")],
+                                button: "Create") else { return }
+        makePlaceholder(named: answers[1], index: answers[0], in: folderPath)
+    }
+
+    @discardableResult
+    func makePlaceholder(named document: String, index typed: String, in folderPath: String) -> Bool {
+        guard let folder, let tree = binder, var e = engagement else { return false }
+        do {
+            guard !document.isEmpty, !document.contains("/"), !document.contains(":") else { throw TBError("Give the document a name, without “/” or “:”.") }
+            let index = typed.isEmpty ? nil : BinderIndex(typed: typed, isFolder: false)
+            if !typed.isEmpty && index == nil { throw TBError("A file's index is number.number, like 4000.05.") }
+            let plan = BinderIndexer.place([BinderPlaceholder.name(for: document)], at: index, in: tree)
+            let relative = folderPath + "/" + plan.names[0]
+            let url = folder.appendingPathComponent(relative)
+            guard !FileManager.default.fileExists(atPath: url.path) || plan.renames.contains(where: { $0.from == relative }) else {
+                throw TBError("There is already an item named “\(plan.names[0])” there.")
+            }
+            try BinderFileOps.apply(plan.renames, root: folder)
+            try Data("Placeholder made in TB Tool on \(Timestamp.dayString(Date())). The document has not arrived yet.\n".utf8).write(to: url, options: .atomic)
+            e.relink(after: plan.renames)
+            commit(e, action: "New Placeholder", notes: ["Made “\(relative)”"] + plan.renames.map { "Renamed “\($0.from)” to “\($0.to)”" })
+            refreshBinder()
+            status = "Made a placeholder for “\(document)”"
+            return true
+        } catch {
+            alert = AlertInfo(title: "The placeholder wasn't made", message: error.localizedDescription)
+            refreshBinder()
+            return false
+        }
+    }
+
+    // MARK: Folders
+
+    /// Makes a folder at the top of the binder ("" for `parentPath`) or inside another folder.
+    func newBinderFolder(in parentPath: String) {
+        guard let tree = binder else { return }
+        let parent = tree.item(parentPath)
+        let number = BinderIndexer.newFolderIndex(in: parentPath, tree: tree)
+        guard let answers = ask(parent == nil ? "New Folder in the Binder" : "New Folder in “\(parent!.name)”",
+                                "The number comes first in the folder's name, and the files inside take it as the start of their index.",
+                                fields: [("Number (leave empty for none)", number?.text ?? "", "e.g. 5040"), ("Name", "", "e.g. Correspondence")],
+                                button: "Create") else { return }
+        makeBinderFolder(named: answers[1], number: answers[0], in: parentPath)
+    }
+
+    @discardableResult
+    func makeBinderFolder(named name: String, number typed: String, in parentPath: String) -> Bool {
+        guard let folder, let tree = binder else { return false }
+        do {
+            guard !name.isEmpty, !name.contains("/"), !name.contains(":") else { throw TBError("Give the folder a name, without “/” or “:”.") }
+            var full = name
+            if !typed.isEmpty {
+                guard let index = BinderIndex(typed: typed, isFolder: true) else { throw TBError("A folder's number is digits only, like 5040.") }
+                if let other = BinderIndexer.holder(of: index, isFolder: true, in: tree) { throw TBError("\(index.text) is already the number of “\(other.title)”. No two folders share a number.") }
+                full = index.text + " " + name
+            }
+            let relative = parentPath.isEmpty ? full : parentPath + "/" + full
+            let url = folder.appendingPathComponent(relative, isDirectory: true)
+            guard !FileManager.default.fileExists(atPath: url.path) else { throw TBError("There is already an item named “\(full)” there.") }
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+            record("New Folder", ["Made “\(relative)”"])
+            collapsedFolders.remove(parentPath)
+            refreshBinder()
+            status = "Made the folder “\(full)”"
+            return true
+        } catch {
+            alert = AlertInfo(title: "The folder wasn't made", message: error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Changes the name of a file or folder. Its index stays in front.
+    func renameBinderItem(_ path: String) {
+        guard let tree = binder, let item = tree.item(path) else { return }
+        guard let answers = ask("Rename “\(item.displayTitle)”", item.index == nil ? "" : "Its index, \(item.index!.text), stays in front. To change the index, use Set Index.",
+                                fields: [("Name", item.title, "")], button: "Rename") else { return }
+        let renames = BinderIndexer.retitle(path, to: answers[0], in: tree)
+        if renames.isEmpty {
+            if answers[0] != item.title { alert = AlertInfo(title: "That name can't be used", message: "A name can't be empty or have “/” or “:” in it.") }
+            return
+        }
+        applyBinderRenames(renames, actionName: "Rename")
+    }
+
+    /// Lays the folders of the binder layout out in this binder (existing folders are left
+    /// alone), or with `elsewhere` in a folder that is chosen: an old binder to be put in order.
+    func makeStandardFolders(elsewhere: Bool) {
+        let layout = BinderLayouts.load().layout(forEntityType: engagement?.binder.entityType ?? "")
+        var target = folder
+        if elsewhere || target == nil {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.directoryURL = folder?.deletingLastPathComponent()
+            panel.message = "Choose the folder to make the standard binder folders in"
+            panel.prompt = "Make Folders Here"
+            guard panel.runModal() == .OK, let chosen = panel.url else { return }
+            target = chosen
+        }
+        guard let target else { return }
+        let fm = FileManager.default
+        let missing = layout.paths.filter { !fm.fileExists(atPath: target.appendingPathComponent($0).path) }
+        guard !missing.isEmpty else {
+            alert = AlertInfo(title: "Nothing to make", message: "Every folder of the standard layout is already in “\(target.lastPathComponent)”.")
+            return
+        }
+        if !quiet {
+            let confirm = NSAlert()
+            confirm.messageText = "Make \(missing.count) folder\(missing.count == 1 ? "" : "s") in “\(target.lastPathComponent)”?"
+            confirm.informativeText = missing.prefix(12).joined(separator: "\n") + (missing.count > 12 ? "\n…" : "")
+                + "\n\nNothing that is already there is changed. The layout is set in TB Tool ▸ Settings ▸ Binder Layout."
+            confirm.addButton(withTitle: "Make Folders")
+            confirm.addButton(withTitle: "Cancel")
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        }
+        do {
+            let made = try layout.create(in: target)
+            if target.standardizedFileURL == folder?.standardizedFileURL {
+                record("Add Standard Folders", missing.map { "Made “\($0)”" })
+                refreshBinder()
+            } else if !quiet {
+                reveal(target)
+            }
+            status = "Made \(made) folder\(made == 1 ? "" : "s") in \(target.lastPathComponent)"
+        } catch {
+            alert = AlertInfo(title: "Couldn't make the folders", message: error.localizedDescription)
+        }
+    }
+
+    // MARK: Opening and deleting
+
+    /// Where trashed items go instead of the Trash, when set: test runs keep out of the real one.
+    var trashFolder: URL?
+
+    /// Moves an item to the Trash and says where it ended up.
+    private func trash(_ url: URL) throws -> URL? {
+        if let trashFolder {
+            try FileManager.default.createDirectory(at: trashFolder, withIntermediateDirectories: true)
+            let to = trashFolder.appendingPathComponent("\(UUID().uuidString.prefix(6)) \(url.lastPathComponent)")
+            try FileManager.default.moveItem(at: url, to: to)
+            return to
+        }
+        var result: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &result)
+        return result as URL?
+    }
+
+    func openBinderItems(_ paths: Set<String>) {
+        guard let tree = binder else { return }
+        for item in tree.all where paths.contains(item.path) { NSWorkspace.shared.open(tree.url(item)) }
+    }
+
+    /// Moves files and folders to the Trash, after asking. They can be put back from the Trash,
+    /// or with ⌘Z.
+    func trashBinderItems(_ paths: Set<String>) {
+        guard let folder, let tree = binder, var e = engagement else { return }
+        // A folder takes what is inside it along.
+        let items = tree.all.filter { item in
+            paths.contains(item.path) && !paths.contains { item.path.hasPrefix($0 + "/") }
+        }
+        guard !items.isEmpty else { return }
+        let inside = items.filter(\.isFolder).reduce(0) { n, f in n + tree.all.filter { $0.path.hasPrefix(f.path + "/") && !$0.isFolder }.count }
+        func gone(_ path: String) -> Bool { items.contains { path == $0.path || path.hasPrefix($0.path + "/") } }
+        let referenced = e.journalEntries.filter { $0.references.contains { gone($0.path) } }.map(\.number)
+        if !quiet {
+            let confirm = NSAlert()
+            confirm.alertStyle = .warning
+            confirm.messageText = items.count == 1 ? "Move “\(items[0].name)” to the Trash?" : "Move \(items.count) items to the Trash?"
+            var text = items.count == 1 ? "" : items.prefix(10).map(\.name).joined(separator: "\n") + (items.count > 10 ? "\n…" : "") + "\n\n"
+            if inside > 0 { text += "The folder\(items.filter(\.isFolder).count == 1 ? "" : "s") hold\(items.filter(\.isFolder).count == 1 ? "s" : "") \(inside) file\(inside == 1 ? "" : "s"), which go too. " }
+            if !referenced.isEmpty { text += "\(referenced.joined(separator: ", ")) refer\(referenced.count == 1 ? "s" : "") to what is being removed; the reference will show as missing. " }
+            text += "You can put \(items.count == 1 && inside == 0 ? "it" : "them") back from the Trash, or with ⌘Z."
+            confirm.informativeText = text
+            confirm.addButton(withTitle: "Move to Trash")
+            confirm.addButton(withTitle: "Cancel")
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        }
+        var moved: [(String, URL)] = []
+        var failed: [String] = []
+        for item in items {
+            do {
+                if let result = try trash(folder.appendingPathComponent(item.path)) { moved.append((item.path, result)) }
+            } catch {
+                failed.append("\(item.name): \(error.localizedDescription)")
+            }
+        }
+        if !moved.isEmpty {
+            let done = moved
+            undoManager?.registerUndo(withTarget: self) { model in model.putBack(done) }
+            undoManager?.setActionName("Move to Trash")
+            // Marks on files that are gone come off; the log keeps the record of them.
+            e.signOffs.removeAll { s in moved.contains { s.path == $0.0 || s.path.hasPrefix($0.0 + "/") } }
+            commit(e, action: "Move to Trash", notes: moved.map { "“\($0.0)” moved to the Trash" })
+        }
+        refreshBinder()
+        refreshLinks()
+        status = "Moved \(moved.count) item\(moved.count == 1 ? "" : "s") to the Trash"
+        if !failed.isEmpty { alert = AlertInfo(title: "Some items couldn't be moved to the Trash", message: failed.joined(separator: "\n")) }
+    }
+
+    private func putBack(_ moved: [(String, URL)]) {
+        guard let folder, let e = engagement else { return }
+        var notes: [String] = []
+        for (path, trashed) in moved {
+            let home = folder.appendingPathComponent(path)
+            if !FileManager.default.fileExists(atPath: home.path), (try? FileManager.default.moveItem(at: trashed, to: home)) != nil {
+                notes.append("“\(path)” put back from the Trash")
+            }
+        }
+        commit(e, action: "Undo: Move to Trash", notes: notes.isEmpty ? ["Nothing could be put back; look in the Trash."] : notes)
+        refreshBinder()
+        refreshLinks()
+    }
+
+    /// Marks every one of the files that isn't marked yet.
+    func markSignOff(_ level: SignOffLevel, on paths: Set<String>) {
+        guard let folder, let tree = binder else { return }
+        let actor = self.actor
+        var hashes: [(String, String)] = []
+        for item in tree.files where paths.contains(item.path) && !item.isPlaceholder && engagement?.signOff(level, for: item.path) == nil {
+            if let hash = FileFingerprint.sha256(of: folder.appendingPathComponent(item.path)) { hashes.append((item.path, hash)) }
+        }
+        guard !hashes.isEmpty else { return }
+        mutate("Mark as \(level.label)") { e in
+            for (path, hash) in hashes { e.setSignOff(level, for: path, by: actor, fileHash: hash) }
+        }
     }
 
     // MARK: Bringing files into the binder
 
     /// Files dropped on the binder from Finder: asks how to number them before anything moves.
-    func showAddToBinder(_ urls: [URL], folderPath: String, suggested: BinderIndex? = nil) {
+    func showAddToBinder(_ urls: [URL], folderPath: String, suggested: BinderIndex? = nil, preferSuggested: Bool = false) {
         guard binder != nil, !urls.isEmpty else { return }
         Windows.shared.close("binder-add")
         Windows.shared.show("binder-add", title: "Add to the Binder", size: NSSize(width: 600, height: 480), minSize: NSSize(width: 540, height: 400)) {
-            AddToBinderView(urls: urls, folderPath: folderPath, suggested: suggested)
+            AddToBinderView(urls: urls, folderPath: folderPath, suggested: suggested, preferSuggested: preferSuggested)
         }
     }
 
@@ -1160,12 +1466,13 @@ final class AppModel: ObservableObject {
     // MARK: Export
 
     enum ExportFormat: String, CaseIterable {
-        case xlsx, csv, json
+        case xlsx, csv, json, pdf
         var label: String {
             switch self {
             case .xlsx: return "Excel"
             case .csv: return "CSV"
             case .json: return "JSON"
+            case .pdf: return "PDF"
             }
         }
     }
@@ -1194,8 +1501,18 @@ final class AppModel: ObservableObject {
             case .xlsx: return Exporter.xlsx([table])
             case .csv: return Data(Exporter.csv(table, heading: true).utf8)
             case .json: return Data(Exporter.jsonRecords(table).utf8)
+            case .pdf: return PDFReport.data([table])
             }
         }
+    }
+
+    /// Every report in one PDF, each starting on a new page. The long-format data and the chart
+    /// are left out: they are for spreadsheets, not for reading.
+    func exportAllAsPDF() {
+        guard let ledger else { return }
+        guard let url = savePanel(name: "\(exportPrefix) - Reports.pdf", ext: "pdf", message: "Every report in one PDF") else { return }
+        let tables = Reports(ledger: ledger).workbook(prior: priorCount, hideZero: HideZeroToggle.isOn).filter { !$0.flat && $0.sheetName != "Accounts" }
+        write(to: url) { PDFReport.data(tables) }
     }
 
     /// The "Prior Periods" choice on the trial balance screens (one prior year unless changed).
@@ -1345,6 +1662,19 @@ final class AppModel: ObservableObject {
             status = "Saved “\(name)” as a standard list"
         } catch {
             alert = AlertInfo(title: "Couldn't save the grouping list", message: error.localizedDescription)
+        }
+    }
+}
+
+/// A document let go on a placeholder: a file already in the binder, or one from outside it.
+enum PlaceholderArrival: Equatable {
+    case inside(String)
+    case outside(URL)
+
+    var name: String {
+        switch self {
+        case .inside(let path): return (path as NSString).lastPathComponent
+        case .outside(let url): return url.lastPathComponent
         }
     }
 }

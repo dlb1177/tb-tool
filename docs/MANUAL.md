@@ -198,7 +198,9 @@ prior. To start the next year, roll forward ([section 12](#12-prior-years-and-ro
 
 ### Settings for the app itself
 
-TB Tool ▸ **Settings…** (⌘,) holds what applies to every file. It has two tabs:
+TB Tool ▸ **Settings…** (⌘,) holds what applies to every file. At the top right is
+**Appearance**: *Automatic* (the app is light or dark as the Mac is, and changes with it),
+*Light*, or *Dark*. The same choice is under View ▸ Appearance. Below are two tabs:
 
 - **Grouping Lists**: the firm and preparer that new files start with, the Hide zero rows
   switch, and the standard grouping lists ([section 10](#10-groupings)).
@@ -392,7 +394,12 @@ section, each grouping with its total in bold, subgroups nested under their grou
 accounts inside each. Accounts with no grouping come last, under *Ungrouped accounts*. The
 amount columns, the total and net income are exactly those of the plain list. Double-click an
 account for its activity, or a grouping for its accounts across every trial balance. The
-choice is remembered, and it has its own column layout. The same layout is available for
+choice is remembered, and it has its own column layout.
+
+**Sorting goes back to the plain list.** A list sorted by a column has no groupings in it, so
+clicking a heading while By Grouping is on turns By Grouping off: the button goes back to
+unselected and you get the plain list, sorted by the column you clicked. Click By Grouping
+again to return to the groupings. The same layout is available for
 export as the Single Trial Balance report with **By grouping** ticked
 ([section 13](#13-reports-and-exports)).
 
@@ -476,8 +483,12 @@ Every trial balance, consolidation, report, activity and grouping grid behaves t
 - **Hide zero rows** is one switch for the whole app. It appears on every trial balance and
   report screen and under View ▸ Hide Zero Balance Rows (⇧⌘0). The workbook export follows it.
 
-The Accounts and Journal Entries screens are lists rather than grids. They sort by column and
-remember column order and hidden columns, but not widths.
+**Column widths are the same everywhere.** The Accounts, Grouping List and Journal Entries
+screens, and the binder's All Files view, follow the same rule as the grids: every column
+starts at the narrowest width that shows its heading and everything in it, and a column you
+resize by hand keeps the width you gave it, on that screen, from then on. (Accounts, Grouping
+List and Journal Entries are lists rather than grids: they sort by column and remember column
+order and hidden columns, and do not have the filter box or pinned totals.)
 
 ## 8. Journal entries
 
@@ -863,26 +874,44 @@ mistaken for workpapers.
 
 ![The binder](images/binder.png)
 
-**Binder** in the sidebar shows the whole binder opened out: every folder and file, indented
-as they are nested, with its index, its name, any Finder tags, and its sign-off marks. A file
-with no index says *no index*; a loose file beside the trial balance says *not filed*; a
-placeholder left by a roll forward is marked. The screen is meant to replace the Finder window
-for the binder: files are brought in, moved, numbered, previewed, opened and signed off here.
+**Binder** in the sidebar is meant to replace the Finder window for the binder: files and
+folders are made, brought in, moved, numbered, renamed, previewed, opened, signed off and
+removed here.
+
+Across the top:
+
+- **New**: a folder, a folder inside the selected folder, a placeholder, or the standard
+  folders.
+- **Index**: Set Index…, Index the Selected Files, Remove the Index, Close the Gaps, Index the
+  Unindexed Files.
+- **Open** (⌘O), **Preview** (Space), **Delete** (⌘⌫), Refresh, **Show in Finder**.
+
+Under that:
+
+- **Folders | All Files**: the two views, below.
+- **Expand All**, **Collapse All** (Folders view).
+- **Search files**: type any part of an index, a file name or a folder name.
+- **Status**: only the files at a point of sign-off.
+- **Needs attention**: only what the alerts are about.
 
 The folder is read when a file is opened and whenever you come back to TB Tool from another
-app. **Refresh** reads it again.
+app. Refresh reads it again.
 
 | To | Do this |
 |---|---|
 | Select an item | Click it, or move with ↑ and ↓. |
-| Open a file | Double-click it. |
-| Preview a file | Press **Space** (or click **Preview**). |
+| Select several | **⌘-click** adds or removes one; **⇧-click** takes everything from the last click to this one; ⇧↑ and ⇧↓ extend; ⌘A selects all. |
+| Open what is selected | Double-click, the Open button, or **⌘O**. Several files open at once. |
+| Preview a file | Press **Space** (or click Preview). |
+| Move to the Trash | The Delete button or **⌘⌫**. |
 | Close or open a folder | Click its arrow, double-click it, or press ← and →. |
-| Close or open every folder | **Collapse All**, **Expand All**. |
 | Add files from Finder | Drop them on a folder. |
 | Move or renumber a file | Drag it. |
 | Sign a file off | Click **P**, **R** or **2R** on its row. |
 | Everything else | Right-click the item. |
+
+Control-click is a right-click, as everywhere on the Mac: it opens the menu for the row (or
+for the whole selection, when the row is part of one). Use ⌘-click to add to a selection.
 
 **Alerts.** The top of the screen, the badge in the sidebar and the data check all report:
 
@@ -892,7 +921,39 @@ app. **Refresh** reads it again.
 - a workpaper that **changed after it was signed off**, or a signed-off workpaper that can no
   longer be found.
 
-**Only what needs attention** narrows the list to those.
+### Two views: Folders and All Files
+
+**Folders** shows the binder opened out: every folder and file, indented as they are nested,
+with its index, its name, any Finder tags, and its sign-off marks. A file with no index says
+*no index*; a loose file beside the trial balance says *not filed*; a placeholder is marked.
+
+![The binder as one flat list](images/binder-all-files.png)
+
+**All Files** drops the folders and lists every file in the binder in columns: **Index**,
+**File**, **Folder** (the path of the folder it is in), **Prepared**, **Reviewed**, **Second
+Reviewed** (who and when, with *changed since* if the file changed afterwards), and **Tags**.
+Click a heading to sort; drag headings to reorder; columns start as narrow as their contents
+and keep any width you set. Select rows as in any list (⌘-click, ⇧-click); double-click opens;
+right-click gives Open, Preview, Show in Finder, Set Index…, Rename…, Index, the sign-off
+marks, and Move to Trash. Space, ⌘O and ⌘⌫ work here too. Dragging to move or renumber is done
+in the Folders view.
+
+### Searching, and filtering by sign-off
+
+The **search box** works in both views. Type words in any order; a file stays if its index,
+its name or the folders it is in contain all of them. Searching for a folder's name shows
+everything in that folder. In the Folders view the matching files are shown under their
+folders, with every folder open.
+
+The **Status** menu narrows either view to files that are:
+
+- *Not Prepared*, *Prepared*;
+- *Not Reviewed*, *Reviewed*;
+- *Not Second Reviewed*, *Second Reviewed*;
+- *Changed Since Sign-off*.
+
+Placeholders have no sign-off, so a status hides them. Search, Status and Needs attention
+combine. Folders cannot be closed or dragged into while a search or status is in force.
 
 ### Opening and closing folders
 
@@ -901,59 +962,145 @@ folder; a closed folder shows how many items it holds. **Collapse All** closes e
 leaving the top-level list; **Expand All** opens everything. What you leave closed stays closed
 the next time you open the file. ← on a file selects the folder it is in.
 
-### Previewing a file
+### Previewing and opening
 
 Select a file and press **Space**: the file is shown in a Quick Look panel, as in Finder,
 without opening it in its own app. Press Space again (or Esc) to close it. With the preview
 open, ↑ and ↓ move through the binder and the preview follows.
 
+**⌘O**, the Open button or a double-click opens what is selected in its own app. With several
+files selected they all open. (With nothing selected in the binder, ⌘O is File ▸ Open… as
+usual.)
+
+### Making folders and subfolders
+
+**New ▸ New Folder…** makes a folder at the top of the binder. **New ▸ New Folder in “…”…**,
+or right-click a folder ▸ **New Folder Inside…**, makes a subfolder. You are asked for a number
+and a name, and the number is filled in for you:
+
+- at the top of the binder, the next thousand after the highest folder there (after
+  `5000 Permanent Files` comes 6000);
+- inside a folder, ten past the highest folder already inside it, or past the folder's own
+  number (inside `5000 Permanent Files`, after 5030 comes 5040).
+
+Type a different number if you like. A number another folder already has is refused, since no
+two folders share one. Leave the number empty for a folder with none.
+
+**To renumber a folder or subfolder**, select it and choose Index ▸ **Set Index…** (or
+right-click ▸ Change Index…). The files inside that carry its number are renumbered with it:
+making `5020 Entity Formation Documents` 5040 turns `5020.01 …` into `5040.01 …`. If another
+folder has the number you can insert before it or take its place, as with files.
+
+**Rename…** (right-click) changes the name of a file or folder and leaves its index in front.
+
+### The standard folders, in this binder or another folder
+
+- **New ▸ Add the Standard Folders to This Binder…** makes whichever folders of the binder
+  layout ([section 4](#4-setting-up-a-file)) are not already there. Nothing that exists is
+  changed or moved.
+- **New ▸ Make the Standard Folders in Another Folder…** (also File ▸ **Make Binder Folders in
+  a Folder…**, which works with no file open) asks for any folder and makes them there. This is
+  for putting an old binder in order: make the folders in it, then file what is loose.
+
+Either way you are shown the folders that will be made, and asked, first.
+
+### Placeholders
+
+A placeholder holds a place, and an index, for a document that has not arrived. A roll forward
+leaves them ([section 12](#12-prior-years-and-rolling-forward)), and you can make one yourself:
+**New ▸ New Placeholder…** with a folder or one of its files selected, or right-click a folder
+▸ **New Placeholder Here…**. Give the document's name; the index is filled in with the
+folder's next one (change it, or empty it for none). The file made is
+`4000.05 (PLACEHOLDER) Bank statement - December.pdf.txt`.
+
+**When the document arrives, drop it on its placeholder**, from Finder or from elsewhere in
+the binder. Either way the same question is asked:
+
+![A document let go on a placeholder](images/binder-placeholder.png)
+
+- **Replace the placeholder** (the default): the document takes the placeholder's index, the
+  placeholder goes to the Trash, and journal entries that referred to the placeholder refer to
+  the document.
+- **Add it as a new file, with no index**: the document is put in the folder and the
+  placeholder stays.
+
 ### Bringing files in from Finder
 
-Drag one or more files from a Finder window or the Desktop and **drop them on a folder** in
-the Binder screen. Dropping on a file adds to the folder that file is in.
+Drag files from a Finder window or the Desktop and **drop them on a folder** in the Binder
+screen (Folders view). Dropping on a file adds to the folder that file is in.
 
-![Adding files to the binder](images/binder-add.png)
+**One file** is asked about:
 
-A window asks how to number them, and shows the names they will have:
+![Adding a file to the binder](images/binder-add.png)
 
-- **The next index in this folder** is the default: `4000.05`, `4000.06`… in the order the
-  files were dropped.
-- **This index** (or **Starting at**): a number you type. If it is taken, the file that has it,
-  and any that follow it without a gap, move up to make room; the list shows each rename.
-  Dropping the files just above or below an indexed file fills this in with that spot's number.
-- **No index**: the files keep their names.
+- **The next index in this folder** is the default.
+- **This index**: a number you type. If it is taken, the file that has it, and any that follow
+  it without a gap, move up to make room; the list shows each rename.
+- **No index**: the file keeps its name.
 
-A number a file arrives with (`2000.09 Old.pdf`) is replaced by the new one. Folders that are
-dropped come in under their own names. **Files are moved** into the binder, as Finder moves
-them; tick **Leave the originals where they are** to copy instead (the choice is remembered).
-Nothing is overwritten: if a file of the same name is already there, nothing is added and a
-message says so. **Cancel** adds nothing. ⌘Z takes an add back: a moved file returns to where
-it came from, a copy goes to the Trash, and files that made room get their numbers back.
+If you let the file go **between two files that have a free number between them** (between
+`4000.02` and `4000.05`, say), that free number is offered, already chosen: the file lands
+where you put it and nothing has to be renumbered.
+
+**Several files at once come in without an index**, with no questions, and arrive selected.
+Number them in one go with Index ▸ **Index the Selected Files**: each takes the next index of
+its folder, in the order listed. Reorder them afterwards by dragging.
+
+A number a file arrives with (`2000.09 Old.pdf`) is replaced when it is given a new one.
+Folders that are dropped come in under their own names. **Files are moved** into the binder,
+as Finder moves them; tick **Leave the original where it is** in the window above to copy
+instead (the choice is remembered, and applies to several files too). Nothing is overwritten:
+if a file of the same name is already there, nothing is added and a message says so. ⌘Z takes
+an add back: a moved file returns to where it came from, a copy goes to the Trash.
 
 Files dropped below the last row, on no folder, land beside the trial balance and are flagged
 *not filed* until you file them.
 
 ### Dragging to move and renumber
 
-Drag a file to a new place in the list. A line shows where it will go: **above** a file,
-**below** a file, or the row lights up when you are **on** it. Nothing changes when you let go:
+In the Folders view, drag a file to a new place in the list. A line shows where it will go:
+**above** a file, **below** a file, or the row lights up when you are **on** it.
+
+**If only the dragged file has to be renamed, it is simply moved.** That is the case when it
+lands on a free number or is filed in a folder. **If other files have to be renumbered, you
+are shown the renames and asked first:**
 
 ![Confirming a move](images/binder-move.png)
 
-a window says what the move does, lists every file that will be renamed, and waits for
-**Renumber** (or **Move**). **Cancel**, or closing the window, leaves everything as it was.
+**Cancel**, or closing the window, leaves everything as it was.
 
 | Let go… | What happens |
 |---|---|
-| **Above or below a file in the same folder** | The file goes there, and the files between its old place and its new one are renumbered. The folder keeps the same run of numbers, gaps included. |
-| **Above or below a file in another folder** (or dragging a file that has no index) | The file moves to that folder and takes the number at that spot. The file that had it, and any that follow it without a gap, move up by one. |
-| **On a file** | The dragged file takes that file's index and place. The other file stays in the folder and **becomes unindexed**. |
-| **On a placeholder** | The same, with a box, ticked to start with: **Move the placeholder to the Trash**. With it ticked, the placeholder goes to the Trash and journal entries that referred to the placeholder refer to the real document instead. |
-| **On a folder** | The file is filed in that folder with the folder's next index. |
+| **Between two files with a free number between them** | The file takes the first free number there. Nothing else is renamed, and nothing is asked. |
+| **Above or below a file in the same folder**, with no free number there | The file goes there, and the files between its old place and its new one are renumbered. The folder keeps the same run of numbers. You confirm. |
+| **Above or below a file in another folder** (or dragging a file that has no index), with no free number there | The file moves to that folder and takes the number at that spot. The file that had it, and any that follow it without a gap, move up by one. You confirm. |
+| **On a file** | The dragged file takes that file's index and place. The other file stays in the folder and **becomes unindexed**. You confirm. |
+| **On a placeholder** | You are asked whether it replaces the placeholder (above). |
+| **On a folder** | The file is filed in that folder with the folder's next index. Nothing is asked. |
 | **Beside a file with no index** | There is no number to take, so the file gets the folder's next index. |
 
 No two files ever end up with the same index. Folders are not dragged; change a folder's
-number with Set Index….
+number with Set Index…. Every one of these can be undone with ⌘Z.
+
+### Indexing several files, and closing gaps
+
+- **Index ▸ Index the Selected Files** (or right-click a selection): every selected file that
+  has no index takes the next index of the folder it is in, in the order listed. Files that
+  already have an index are left alone.
+- **Index ▸ Close the Gaps in “folder”** (or right-click a folder ▸ **Close the Gaps in the
+  Numbering**): renumbers that folder's indexed files 01, 02, 03… in their present order, so
+  no number is skipped. **Files with no index are left with no index.** Select the folder, or
+  any file in it, first.
+- **Index ▸ Index the Unindexed Files in “folder”**, and **Index Every Unindexed File in the
+  Binder**: the same as indexing a selection, for a whole folder or everything.
+
+### Moving to the Trash
+
+Select files or folders and press **⌘⌫** (or click Delete, or right-click ▸ Move to Trash).
+You are asked first, and told if a folder has files in it or if a journal entry refers to
+something being removed. The items go to the Mac's Trash, not out of existence: put them back
+from the Trash, or with ⌘Z. Sign-off marks on removed files come off (the change log keeps the
+record), and a journal entry's reference to a removed file shows as missing.
 
 ### Signing off workpapers
 
@@ -981,9 +1128,9 @@ Finder tags. The **Workpaper Sign-offs** report lists them
 ([section 13](#13-reports-and-exports)). They do **not** roll forward: next year's binder
 starts with nothing signed off.
 
-### Adding and changing indexes
+### Setting one index
 
-Select an item and click **Set Index…** (or right-click it).
+Select an item and choose Index ▸ **Set Index…** (or right-click it).
 
 ![Setting an index](images/set-index.png)
 
@@ -997,15 +1144,9 @@ Select an item and click **Set Index…** (or right-click it).
 - **Renumbering a folder** renames the files inside that carry its number: making
   `5020 Entity Formation Documents` 5040 turns `5020.01 …` into `5040.01 …`.
 
-The **Index** menu and the right-click menu also have:
-
-- **Index Every Unindexed File** (or just those in one folder): each takes the next free
-  number of the folder it is in. Files in a folder that has no number are left until the
-  folder has one.
-- **Close the Gaps**: renumbers a folder's files 01, 02, 03… in their present order.
-- **Remove Index**.
-- **File In** / **Move To**: moves a file into a folder and gives it that folder's next index.
-  This is how a loose file is filed.
+The right-click menu also has **Remove Index**, and **File In** / **Move To**, which moves a
+file into a folder and gives it that folder's next index. This is how a loose file is filed
+without dragging.
 
 **Renames are real.** These, and the drags above, rename and move the files on disk. Journal
 entry references and sign-offs follow every rename and move. ⌘Z puts the names back. A rename
@@ -1094,8 +1235,9 @@ each file has a choice:
   name, and keeps a note of where the real document last was. (Placeholders made before
   version 1.5 were named `… (placeholder).txt`; they are still recognised, and take the present
   name the next time they roll forward.)
-- **When the document arrives**, drag it onto its placeholder in the Binder screen: it takes
-  the placeholder's index, and the placeholder goes to the Trash ([section 11](#11-the-binder)).
+- **When the document arrives**, drop it on its placeholder in the Binder screen, from Finder
+  or from elsewhere in the binder: it takes the placeholder's index, and the placeholder goes
+  to the Trash ([section 11](#11-the-binder)).
 - If entries' references roll forward (*Carry workpaper links on entries that roll forward*), a reference to a document that became
   a placeholder points at the placeholder, and moves to the real document when it replaces it.
 - **Sign-offs do not roll forward**, and next year's file starts its **own change log**, whose
@@ -1120,7 +1262,7 @@ and how many placeholders were left, and offers to open the new year's file.
 | Grouping Summary | The consolidation rolled up to groupings, subgroups nested, net income at the bottom. |
 | Grouping Detail | The same, opened to the accounts. |
 | Single Trial Balance | One trial balance with all its columns. Tick **By grouping** to lay the accounts out under their groupings and subgroups, with a total for each. |
-| Journal Entries | One row per journal line, with the entry's number, type, date, description, referenced files (with the tab and cells of a workbook) and next-year setting. Can be limited to one type. |
+| Journal Entries | The journal, set out entry by entry (below). Can be limited to one type. |
 | Data (Long Format) | One row per trial balance and account, with every column. Made for pivot tables, charts, or handing to another tool. |
 | Chart of Accounts | Accounts with types, grouping and subgroup, and which trial balances use them. |
 | Workpaper Sign-offs | One row per signed-off workpaper: its index, name and folder, then who marked it prepared, reviewed and second reviewed, and when. |
@@ -1129,6 +1271,43 @@ and how many placeholders were left, and offers to open the new year's file.
 Controls appear as they apply: Book / Tax, the trial balance, the entry type, Prior Periods,
 Hide zero rows. Double-click a row to open the entry, the account's activity, or the grouping's
 accounts.
+
+### The journal entries report
+
+![The journal entries report](images/journal-report.png)
+
+The Journal Entries report reads like a journal, not a table of lines:
+
+- A heading for each kind of entry, in order: **Adjusting**, **Reclassifying**, **Tax**,
+  **Eliminating** journal entries. Only the kinds the file has are shown.
+- **Each entry stands on its own.** Its number, date and description are given once, across
+  the top, not repeated on every line.
+- **Its references come straight after the description.** On screen each shows the file's
+  full path within the binder, the tab and cells of a workbook, and its note, and **is a
+  link**: click it to open the workpaper (a workbook opens on its tab).
+- Then its lines: trial balance, account, account name, debit, credit, memo. Then the entry's
+  total.
+- A total for each kind, and at the end a total of everything.
+- An entry's *Next year* setting is shown at its top right, on screen only.
+
+Search finds entries by number, description, account, memo or amount. Double-click an entry to
+edit it. An entry still waiting for amounts after a roll forward posts nothing and is not
+listed.
+
+**What is exported is the same layout, made for a client to read**, in every format (Excel,
+CSV, PDF and Copy):
+
+![The journal as a PDF](images/journal-pdf.png)
+
+- Each entry is set apart: a shaded line with its number, date and description, its lines, its
+  total, and a gap before the next.
+- **References are given as the index and file name only**, one per line under the
+  description: `Ref: 3000.01 Mortgage interest accrual.xlsx`. No folder path, no tab or cells,
+  no note, and nothing that is a link.
+- **The next-year setting is left out.**
+- The JSON export is the one exception to the layout: it is data, so it has one record per
+  journal line with the entry's fields on each. It too gives references by index and file
+  name and leaves out the next-year setting.
 
 Like the other balance screens, the reports include an entry that is being typed, but
 **exports and Copy leave it out**:
@@ -1139,11 +1318,18 @@ Like the other balance screens, the reports include an entry that is being typed
 
 **Every export asks where to save, starting in the folder the JSON file is in.**
 
-- **Excel**, **CSV**, **JSON**, **Copy** on the Reports screen export the report shown.
+- **Excel**, **CSV**, **JSON**, **PDF**, **Copy** on the Reports screen export the report
+  shown. The Change Log screen, the activity window and the grouping-accounts window offer the
+  same formats.
 - **Export Full Workbook…** (⇧⌘E) writes one Excel workbook with every report as a sheet:
   Consolidated, Consolidated (Tax) when there are tax-only entries, Groupings, Grouping Detail,
-  one sheet per trial balance, Journal Entries, Data, and Accounts. (The sign-offs and the
-  change log are not in the workbook; export them on their own.)
+  one sheet per trial balance, **Journal Entries** (every entry, under a heading for each
+  kind), then a sheet for each kind the file has — **AJEs**, **RJEs**, **TJEs**, **EJEs** —
+  then Data and Accounts. (The sign-offs and the change log are not in the workbook; export
+  them on their own.)
+- **All Reports as PDF…** writes every report into one PDF, each starting on a new page, with
+  the pages numbered right through. The long-format data and the chart of accounts are left
+  out; they are for spreadsheets.
 - **Quick Export** (⌘E) asks for a folder and writes two time-stamped files there: the full
   workbook and `… data.csv`, the long-format data.
 - The activity window and the grouping-accounts window have their own Copy and Export.
@@ -1158,6 +1344,21 @@ Like the other balance screens, the reports include an entry that is being typed
   landscape and fit to width, with the sheet name and page number in the footer.
 - The **Data** sheet has no heading: one header row and one record per row, so it pivots.
 
+**What a PDF export looks like:**
+
+- The same heading, in full on a report's first page; later pages say "(continued)".
+- **The column titles repeat on every page**, and every page is numbered at its foot, *Page 2
+  of 5*, beside the client and report name.
+- **The page is chosen to fit the report.** A narrow report is printed upright on letter
+  paper; a wider one sideways; a consolidation with many trial balances on legal or tabloid
+  paper, with smaller type, so that no column of figures is ever cut off. Columns of words
+  (names, memos) wrap onto a second line when they must.
+- **Nothing is broken across pages that belongs together.** A journal entry — its heading, its
+  references, its lines and its total — is always on one page (unless one entry is longer than
+  a page). A heading is never left at the foot of a page without what follows it, and a total
+  is never carried over alone.
+- Credits are in brackets, zero is a dash, and totals are ruled above.
+
 CSV exports of a report carry the same heading lines above the columns. A JSON export holds
 the report's title and heading and a `rows` array of records keyed by column title, without
 subtotal rows. Amounts in every export are
@@ -1168,9 +1369,11 @@ plain signed numbers: debits positive, credits negative.
 **Saving.** There is no Save command. Every change is written to the JSON file as you make it.
 
 **Undo.** ⌘Z undoes any change to the file, from any window, back to when you opened it. ⇧⌘Z
-redoes. That includes renames, moves and adds in the binder, which are put back on disk.
+redoes. That includes renames, moves, adds and moves to the Trash in the binder, which are put back on
+disk.
 Changes to standard grouping lists and binder layouts in the app's settings are the exception,
-and so is a placeholder sent to the Trash (take it out of the Trash). Undo never removes
+and so are a replaced placeholder sent to the Trash (take it out of the Trash) and a folder or
+placeholder you made (move it to the Trash). Undo never removes
 anything from the change log: undoing a change adds a line that says so.
 
 **Backups.** The first time you change a file in a session, the file as it was is copied to a
@@ -1433,7 +1636,7 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | `check` | Lists every data-check problem, or says the file is clean. Also says how many accounts aren't grouped, what in the binder is loose, unindexed or numbered twice, which trial balances have no activity number, and whether the change log has been altered. |
 | `log` | Prints the change log: when, the action, who and on which Mac, and what changed. Exits with status 2 if a line does not follow from the one before it. |
 | `summary` | Balance check and net income per trial balance (with its activity number, and anything reclassified to or from other trial balances) and consolidated. |
-| `export` | `.xlsx` writes the full workbook; `.csv` writes the long-format data. |
+| `export` | `.xlsx` writes the full workbook, with the journal sheets described in [section 13](#13-reports-and-exports); `.csv` writes the long-format data. PDFs are made by the app, not by `tbcli`. |
 
 **An entry file for `post`:**
 
@@ -1481,11 +1684,12 @@ name, login and Mac of whoever ran it and what the command changed.
 | New Blank Trial Balance… | | |
 | Import Chart of Accounts… / Export Chart of Accounts… | | |
 | Import Grouping List… / Export Grouping List… | | |
+| Make Binder Folders in a Folder… | | The standard binder folders, in any folder you choose. |
 | Show JSON File in Finder | ⇧⌘R | |
 
 **Edit**: Undo (⌘Z), Redo (⇧⌘Z), Copy (⌘C), Select All (⌘A).
 
-**View**: Hide Zero Balance Rows (⇧⌘0).
+**View**: Hide Zero Balance Rows (⇧⌘0); Appearance ▸ Automatic, Light, Dark.
 
 **Entries**
 
@@ -1509,7 +1713,10 @@ through the binder's indexed files, Return or Tab to add the highlighted one, Es
 **On the Accounts screen:** Apply Grouping… ⌘G.
 
 **On the Binder screen:** Space previews the selected file and closes the preview; ↑ ↓ move
-through the list; ← closes a folder (or goes to the folder a file is in); → opens a folder.
+through the list (⇧↑ ⇧↓ extend the selection); ← closes a folder (or goes to the folder a file
+is in); → opens a folder; **⌘O** opens what is selected; **⌘⌫** moves it to the Trash; ⌘A
+selects everything; ⌘-click and ⇧-click select several. ⌘O and ⌘⌫ act on the binder only when
+something in it is selected.
 
 **Toolbar:** New Entry (menu of the four types), Import (click to import files; the arrow
 offers Paste, New Blank Trial Balance, Import Chart of Accounts, Import Grouping List), Quick
@@ -1525,7 +1732,7 @@ Export, Roll Forward, Trial Balance Settings.
 | Binder layouts | `~/Library/Application Support/TB Tool/Binder Layouts.json`. It appears only once you change the layout. |
 | Saved import layouts | `~/Library/Application Support/TB Tool/import-layouts.json` |
 | Workpaper sign-offs and the change log | In the engagement's `.json` file. |
-| Saved filters, column layouts, window positions, view choices, which binder folders are closed, new-file defaults | The app's preferences. |
+| Saved filters, column layouts and widths, window positions, view choices, light or dark appearance, which binder folders are closed, new-file defaults | The app's preferences. |
 
 Nothing is sent anywhere. The one time TB Tool talks to another app is when you open a
 workbook reference: it asks Excel, on your Mac, to go to a tab and select cells.
@@ -1615,6 +1822,12 @@ or the Accounts screen's Chart menu.
 **A linked file shows as missing.** Fix Links… on the Journal Entries screen. Or open the
 entry, remove the reference, and pick the file again from the binder's list.
 
+**Control-click doesn't add to the selection.** On the Mac, Control-click is a right-click.
+Use ⌘-click to add or remove one item and ⇧-click to select a run.
+
+**⌘O opened a file from the binder instead of the Open dialog.** Something was selected on the
+Binder screen. Click an empty part of the list first, or use File ▸ Open… from another screen.
+
 **A workpaper isn't in the reference list.** Only indexed files are offered. Give it an index
 on the Binder screen.
 
@@ -1637,8 +1850,8 @@ was edited, or lines were removed or put in, by something other than TB Tool. Co
 copy in `TB Backups`.
 
 **The binder folders weren't made for a new file.** The folder you saved it in already had
-folders, or is a general folder. Open the Binder screen of an empty binder and click **Make the
-Standard Folders**, or make them in Finder.
+folders, or is a general folder. On the Binder screen choose New ▸ **Add the Standard Folders
+to This Binder…**, which adds whichever are missing.
 
 **The data check mentions the binder.** Open Binder from the data check. File loose files with
 right-click ▸ File In, index what has no index with Index ▸ Index Every Unindexed File, and

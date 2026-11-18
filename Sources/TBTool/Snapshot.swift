@@ -23,12 +23,39 @@ enum Snapshotter {
         if let first {
             steps.append(("entity", { model.selection = .entity(first.id) }))
             steps.append(("entity-grouped", { UserDefaults.standard.set(true, forKey: "entity.byGrouping") }))
+            // Click a heading while laid out by grouping: the list goes plain, sorted, and the button with it.
+            steps.append(("entity-grouped-sorted", {
+                guard let table = find(GridTableView.self, in: NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false }?.contentView),
+                      let column = table.tableColumns.first(where: { $0.title == "Unadjusted" }), let proto = column.sortDescriptorPrototype else { return }
+                table.sortDescriptors = [proto]
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    FileHandle.standardError.write(Data("by grouping after sorting: \(UserDefaults.standard.bool(forKey: "entity.byGrouping"))\n".utf8))
+                }
+            }))
             steps.append(("entity-plain", { UserDefaults.standard.set(false, forKey: "entity.byGrouping") }))
         }
         steps.append(("journal", { model.selection = .journal }))
         steps.append(("accounts", { model.selection = .accounts }))
         steps.append(("groupings", { model.selection = .groupings }))
-        steps.append(("reports", { model.selection = .reports }))
+        steps.append(("reports", {
+            UserDefaults.standard.set(ReportKind.consolidating.rawValue, forKey: "reports.kind")
+            model.selection = .reports
+        }))
+        steps.append(("reports-journal", {
+            UserDefaults.standard.set(ReportKind.journal.rawValue, forKey: "reports.kind")
+            model.selection = .reports
+        }))
+        // The exports themselves, written beside the pictures so they can be looked at.
+        steps.append(("exports", {
+            UserDefaults.standard.set(ReportKind.consolidating.rawValue, forKey: "reports.kind")
+            guard let ledger = model.ledger else { return }
+            let reports = Reports(ledger: ledger)
+            try? PDFReport.data([reports.journalReport()]).write(to: dir.appendingPathComponent("journal.pdf"))
+            try? PDFReport.data([reports.consolidating(basis: .book, hideZero: true, prior: 1)]).write(to: dir.appendingPathComponent("consolidating.pdf"))
+            try? PDFReport.data(reports.workbook(prior: 1, hideZero: true).filter { !$0.flat && $0.sheetName != "Accounts" }).write(to: dir.appendingPathComponent("all.pdf"))
+            try? Exporter.xlsx(reports.workbook(prior: 1, hideZero: true)).write(to: dir.appendingPathComponent("workbook.xlsx"))
+            try? Data(Exporter.csv(reports.journalReport(), heading: true).utf8).write(to: dir.appendingPathComponent("journal.csv"))
+        }))
         steps.append(("binder", { model.selection = .binder }))
         steps.append(("change-log", { model.selection = .changeLog }))
         if let tree = model.binder, let target = tree.unindexed.first(where: { !$0.isFolder }) ?? tree.files.first(where: { !$0.parentPath.isEmpty }) {
@@ -380,6 +407,22 @@ enum Snapshotter {
                 let target = tree.folders.first { $0.name.contains("Support") } ?? tree.folders[0]
                 model.showAddToBinder(incoming, folderPath: target.path)
             }))
+            steps.append(("binder-flat", {
+                Windows.shared.closeAll()
+                UserDefaults.standard.set(true, forKey: "binder.flat")
+                model.selection = .binder
+            }))
+            steps.append(("binder-nested", { UserDefaults.standard.set(false, forKey: "binder.flat") }))
+            if let placeholder = tree.files.first(where: { $0.isPlaceholder && $0.index != nil }) {
+                steps.append(("binder-arrive", {
+                    Windows.shared.closeAll()
+                    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-drop-\(UUID().uuidString.prefix(6))", isDirectory: true)
+                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    let url = dir.appendingPathComponent("Lender statement - December.pdf")
+                    try? Data("x".utf8).write(to: url)
+                    model.showReplacePlaceholder(.outside(url), placeholder: placeholder.path)
+                }))
+            }
             steps.append(("binder-log", {
                 Windows.shared.closeAll()
                 model.selection = .changeLog
@@ -416,6 +459,56 @@ enum Snapshotter {
             steps.append(("binder-undo-move", {
                 model.undoManager?.undo()
                 listing("after undoing the drag")
+            }))
+            // Folders, placeholders, several files at once, indexing a selection, a free number, the Trash.
+            steps.append(("binder-ops", {
+                model.trashFolder = dir.appendingPathComponent("trash", isDirectory: true)
+                guard let t0 = model.binder else { return }
+                model.makeBinderFolder(named: "Correspondence", number: BinderIndexer.newFolderIndex(in: "", tree: t0)?.text ?? "", in: "")
+                if let perm = t0.folders.first(where: { $0.name.contains("Permanent") }) {
+                    model.makeBinderFolder(named: "Loan Documents", number: BinderIndexer.newFolderIndex(in: perm.path, tree: t0)?.text ?? "", in: perm.path)
+                }
+                guard let support = t0.folders.first(where: { $0.name.contains("Support") }) else { return }
+                model.makePlaceholder(named: "K-1 - Lakeside.pdf", index: BinderIndexer.nextFileIndex(in: support.path, tree: model.binder!)?.text ?? "", in: support.path)
+                listing("after a new folder, a new subfolder and a new placeholder (folders: \(model.binder!.folders.map(\.name)))")
+                // Several files from outside come in unindexed; then the selection is indexed.
+                let drop = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-drop-\(UUID().uuidString.prefix(6))", isDirectory: true)
+                try? FileManager.default.createDirectory(at: drop, withIntermediateDirectories: true)
+                let incoming = ["Invoice A.pdf", "Invoice B.pdf", "Invoice C.pdf"].map { drop.appendingPathComponent($0) }
+                incoming.forEach { try? Data("x".utf8).write(to: $0) }
+                model.addToBinder(incoming, folderPath: support.path, start: nil, copy: false)
+                listing("after dropping three files at once")
+                model.applyBinderRenames(BinderIndexer.index(Set(incoming.map { support.path + "/" + $0.lastPathComponent }), in: model.binder!), actionName: "Index Files")
+                listing("after indexing the three selected")
+                model.alert = nil
+            }))
+            steps.append(("binder-trash", {
+                guard let tree = model.binder, let support = tree.folders.first(where: { $0.name.contains("Support") }),
+                      let second = support.children.first(where: { $0.index?.suffix == 2 }), let loose = support.children.first(where: { !$0.isFolder && $0.index == nil }) else { return }
+                model.trashBinderItems([second.path])
+                listing("after moving \(second.name) to the Trash")
+                // Now a number is free between 01 and 03: a file let go there takes it, and nothing else moves.
+                let first = model.binder!.item(support.path)!.children.first { $0.index?.suffix == 1 }!
+                let renames = BinderIndexer.move(loose.path, .after(first.path), in: model.binder!)
+                FileHandle.standardError.write(Data("  drag \(loose.name) below \(first.name): \(renames.map { "\($0.from) > \($0.to)" })\n".utf8))
+                if renames.count == 1 { model.applyBinderMove(renames) }
+                listing("after the drag onto the free number")
+            }))
+            steps.append(("binder-untrash", {
+                model.undoManager?.undo()
+                listing("after undoing the drag")
+                model.undoManager?.undo()
+                listing("after undoing the Trash")
+            }))
+            steps.append(("binder-arrived", {
+                guard let tree = model.binder, let placeholder = tree.files.first(where: { $0.isPlaceholder && $0.index?.suffix == 3 }) else { return }
+                let drop = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-drop-\(UUID().uuidString.prefix(6))", isDirectory: true)
+                try? FileManager.default.createDirectory(at: drop, withIntermediateDirectories: true)
+                let url = drop.appendingPathComponent("Lender statement - December.pdf")
+                try? Data("x".utf8).write(to: url)
+                model.arrive(.outside(url), at: placeholder.path, replace: true)
+                model.alert = nil
+                listing("after a document from outside replaced \(placeholder.name) (in the test trash: \((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("trash").path)) ?? []))")
             }))
             steps.append(("binder-log-2", { model.selection = .changeLog }))
         }

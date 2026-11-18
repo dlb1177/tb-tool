@@ -8,11 +8,11 @@ import TBCore
 struct BinderLayoutSettings: View {
     @State private var layouts = BinderLayouts.load()
     /// "" is the layout for every entity type; otherwise an entity type's name.
-    @State private var which: String? = ""
+    @State private var which = ""
     @State private var text = BinderLayouts.load().general.outline
     @State private var note = ""
 
-    private var type: String { which ?? "" }
+    private var type: String { which }
     private var own: BinderLayout? { type.isEmpty ? layouts.general : layouts.byEntityType[type] }
     private var typed: BinderLayout { BinderLayout(outline: text) }
     private var dirty: Bool { own.map { $0 != typed } ?? false }
@@ -29,15 +29,19 @@ struct BinderLayoutSettings: View {
                 }
                 .padding(12)
                 Divider()
-                List(selection: $which) {
-                    row("Every entity type", "The layout used unless a type has its own").tag(Optional(""))
-                    Section("By entity type") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        row("", "Every entity type", "The layout used unless a type has its own")
+                        Text("By entity type").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 12)
+                            .padding(.bottom, 2)
                         ForEach(Binder.entityTypes, id: \.self) { t in
-                            row(t, layouts.byEntityType[t] == nil ? "Uses the layout for every type" : "Has its own layout").tag(Optional(t))
+                            row(t, t, layouts.byEntityType[t] == nil ? "Uses the layout for every type" : "Has its own layout")
                         }
                     }
+                    .padding(8)
                 }
-                .listStyle(.inset)
             }
             .frame(width: 300)
             Divider()
@@ -105,12 +109,23 @@ struct BinderLayoutSettings: View {
         }
     }
 
-    private func row(_ title: String, _ caption: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(title)
-            Text(caption).font(.caption).foregroundStyle(.secondary)
+    /// One choice on the left. A plain button, so every row can always be clicked.
+    private func row(_ key: String, _ title: String, _ caption: String) -> some View {
+        let on = which == key
+        return Button {
+            which = key
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).foregroundStyle(on ? Color.white : Color.primary)
+                Text(caption).font(.caption).foregroundStyle(on ? Color.white.opacity(0.85) : Color.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.accentColor : Color.clear))
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
     }
 
     /// The layout as it will look in the binder.

@@ -311,11 +311,19 @@ final class BinderTests: XCTestCase {
     func testDraggingWithinAFolderRenumbersOnlyWhatLiesBetween() throws {
         let tree = try dragBinder()
         let a = "4000 Support/4000.01 A.pdf", b = "4000 Support/4000.02 B.pdf", c = "4000 Support/4000.03 C.pdf", e = "4000 Support/4000.05 E.pdf"
-        // A below C: B and C move up a place, A takes C's number. E, past the gap, is left alone.
-        XCTAssertEqual(pairs(BinderIndexer.move(a, .after(c), in: tree)),
-                       ["4000.01 A.pdf > 4000 Support/4000.03 A.pdf", "4000.02 B.pdf > 4000 Support/4000.01 B.pdf", "4000.03 C.pdf > 4000 Support/4000.02 C.pdf"])
-        // Above E is the same place as below C.
+        // A below B: B moves up a place and A takes B's number. C and E are left alone.
+        XCTAssertEqual(pairs(BinderIndexer.move(a, .after(b), in: tree)),
+                       ["4000.01 A.pdf > 4000 Support/4000.02 A.pdf", "4000.02 B.pdf > 4000 Support/4000.01 B.pdf"])
+        // Above C is the same place as below B.
+        XCTAssertEqual(BinderIndexer.move(a, .before(c), in: tree), BinderIndexer.move(a, .after(b), in: tree))
+        // Between C and E the number 04 is free: A takes it, and nothing else is renamed.
+        XCTAssertEqual(pairs(BinderIndexer.move(a, .after(c), in: tree)), ["4000.01 A.pdf > 4000 Support/4000.04 A.pdf"])
         XCTAssertEqual(BinderIndexer.move(a, .before(e), in: tree), BinderIndexer.move(a, .after(c), in: tree))
+        XCTAssertEqual(BinderIndexer.freeIndex(at: .after(c), in: tree)?.text, "4000.04")
+        XCTAssertEqual(BinderIndexer.freeIndex(at: .before(e), in: tree)?.text, "4000.04")
+        XCTAssertNil(BinderIndexer.freeIndex(at: .after(a), in: tree))
+        XCTAssertNil(BinderIndexer.freeIndex(at: .after(e), in: tree))
+        XCTAssertNil(BinderIndexer.freeIndex(at: .onto(c), in: tree))
         // E above A: everything before it moves down one; the run keeps the numbers 01, 02, 03, 05.
         XCTAssertEqual(pairs(BinderIndexer.move(e, .before(a), in: tree)),
                        ["4000.01 A.pdf > 4000 Support/4000.02 A.pdf", "4000.02 B.pdf > 4000 Support/4000.03 B.pdf",
@@ -325,8 +333,8 @@ final class BinderTests: XCTestCase {
         XCTAssertEqual(BinderIndexer.move(b, .before(c), in: tree), [])
         XCTAssertEqual(BinderIndexer.move(b, .onto(b), in: tree), [])
 
-        try BinderFileOps.apply(BinderIndexer.move(a, .after(c), in: tree), root: root)
-        XCTAssertEqual(names("4000 Support"), ["4000.01 B.pdf", "4000.02 C.pdf", "4000.03 A.pdf", "4000.05 E.pdf", "Loose.pdf"])
+        try BinderFileOps.apply(BinderIndexer.move(a, .after(b), in: tree), root: root)
+        XCTAssertEqual(names("4000 Support"), ["4000.01 B.pdf", "4000.02 A.pdf", "4000.03 C.pdf", "4000.05 E.pdf", "Loose.pdf"])
         XCTAssertTrue(BinderScanner.scan(root).duplicateIndexes.isEmpty)
     }
 
@@ -378,6 +386,57 @@ final class BinderTests: XCTestCase {
         XCTAssertEqual(e.journalEntries[0].references.map(\.path), ["4000 Support/4000.02 GL.xlsx", "4000 Support/B.pdf"])
         XCTAssertEqual(e.journalEntries[0].references[0].location, "'GL'!B4:D10")
         XCTAssertEqual(e.signOffs.map(\.path), ["4000 Support/B.pdf"])
+    }
+
+    func testIndexingASelectionAndClosingGaps() throws {
+        try make("4000 Support/Invoice B.pdf")
+        try make("4000 Support/Invoice A.pdf")
+        try make("3000 Workpapers/Recon.xlsx")
+        try make("Scans/Unnumbered folder file.pdf")
+        try make("Engagement letter.pdf")
+        var tree = try dragBinder()
+        // Each selected file with no index takes the next number of its own folder, in the order
+        // listed. Files that have an index, loose files, and files in a folder with no number are left.
+        let picked: Set<String> = ["4000 Support/Invoice A.pdf", "4000 Support/Invoice B.pdf", "4000 Support/4000.01 A.pdf",
+                                   "3000 Workpapers/Recon.xlsx", "Scans/Unnumbered folder file.pdf", "Engagement letter.pdf"]
+        XCTAssertEqual(pairs(BinderIndexer.index(picked, in: tree)),
+                       ["Invoice A.pdf > 4000 Support/4000.06 Invoice A.pdf", "Invoice B.pdf > 4000 Support/4000.07 Invoice B.pdf",
+                        "Recon.xlsx > 3000 Workpapers/3000.01 Recon.xlsx"])
+        XCTAssertEqual(BinderIndexer.index(["4000 Support/4000.01 A.pdf"], in: tree), [])
+        try BinderFileOps.apply(BinderIndexer.index(picked, in: tree), root: root)
+        tree = BinderScanner.scan(root)
+
+        // Closing the gaps renumbers the indexed files 01, 02, 03… in order. Unindexed files stay unindexed.
+        XCTAssertEqual(pairs(BinderIndexer.closeGaps(in: "4000 Support", tree: tree)),
+                       ["4000.05 E.pdf > 4000 Support/4000.04 E.pdf", "4000.06 Invoice A.pdf > 4000 Support/4000.05 Invoice A.pdf",
+                        "4000.07 Invoice B.pdf > 4000 Support/4000.06 Invoice B.pdf"])
+        try BinderFileOps.apply(BinderIndexer.closeGaps(in: "4000 Support", tree: tree), root: root)
+        XCTAssertEqual(names("4000 Support"), ["4000.01 A.pdf", "4000.02 B.pdf", "4000.03 C.pdf", "4000.04 E.pdf", "4000.05 Invoice A.pdf", "4000.06 Invoice B.pdf", "Loose.pdf"])
+        XCTAssertEqual(BinderIndexer.closeGaps(in: "4000 Support", tree: BinderScanner.scan(root)), [])
+    }
+
+    func testNewFoldersAndRenaming() throws {
+        let tree = try sampleBinder()
+        // At the top: the next thousand. Inside a folder: ten past the highest beside it, or past the folder's own number.
+        XCTAssertEqual(BinderIndexer.newFolderIndex(in: "", tree: tree)?.text, "6000")
+        XCTAssertEqual(BinderIndexer.newFolderIndex(in: "5000 Permanent Files", tree: tree)?.text, "5030")
+        XCTAssertEqual(BinderIndexer.newFolderIndex(in: "4000 Support", tree: tree)?.text, "4010")
+        XCTAssertEqual(BinderIndexer.newFolderIndex(in: "5000 Permanent Files/5010 PY Tax Returns", tree: tree)?.text, "5030")
+        XCTAssertNil(BinderIndexer.newFolderIndex(in: "5000 Permanent Files/Scans", tree: tree))
+        XCTAssertEqual(BinderIndexer.newFolderIndex(in: "", tree: BinderTree(root: root))?.text, "1000")
+
+        // Renaming keeps the index in front, on files and folders.
+        XCTAssertEqual(BinderIndexer.retitle("2000 Client Financials/2000.02 GL.xlsx", to: "General ledger.xlsx", in: tree),
+                       [BinderRename(from: "2000 Client Financials/2000.02 GL.xlsx", to: "2000 Client Financials/2000.02 General ledger.xlsx")])
+        XCTAssertEqual(BinderIndexer.retitle("4000 Support", to: "Client Support", in: tree), [BinderRename(from: "4000 Support", to: "4000 Client Support", isFolder: true)])
+        XCTAssertEqual(BinderIndexer.retitle("4000 Support/Bank statement.pdf", to: "Statement.pdf", in: tree),
+                       [BinderRename(from: "4000 Support/Bank statement.pdf", to: "4000 Support/Statement.pdf")])
+        XCTAssertEqual(BinderIndexer.retitle("4000 Support", to: "Support", in: tree), [])
+        XCTAssertEqual(BinderIndexer.retitle("4000 Support", to: "A/B", in: tree), [])
+        XCTAssertEqual(BinderIndexer.retitle("4000 Support", to: "  ", in: tree), [])
+        // A renamed folder takes its files with it.
+        try BinderFileOps.apply(BinderIndexer.retitle("4000 Support", to: "Client Support", in: tree), root: root)
+        XCTAssertEqual(names("4000 Client Support"), ["4000.01 Organizer.pdf", "Bank statement.pdf"])
     }
 
     func testPlacingNewFilesInAFolder() throws {

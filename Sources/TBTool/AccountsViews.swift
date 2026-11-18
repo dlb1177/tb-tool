@@ -269,10 +269,10 @@ struct AccountsView: View {
             TableColumn("Account", value: \.number, comparator: .localizedStandard) { r in
                 Text(r.number.isEmpty ? "—" : r.number).monospacedDigit().foregroundStyle(r.number.isEmpty ? .tertiary : .primary)
             }
-            .width(min: 60, ideal: 80, max: 140)
+            .width(min: 36, ideal: 80)
             .customizationID("account")
             TableColumn("Name", value: \.name, comparator: .localizedStandard) { r in Text(r.name) }
-                .width(min: 160, ideal: 300)
+                .width(min: 36, ideal: 300)
                 .customizationID("name")
             TableColumn("Type", value: \.typeLabel) { r in
                 // Read only: the type is the grouping's. Until an account is grouped it shows the
@@ -283,7 +283,7 @@ struct AccountsView: View {
                     .help(fromGrouping ? "From its grouping, \(r.grouping). To change it, change the account's grouping, or the grouping's account type on the Grouping List screen."
                                        : "A guess from the account's number or name. It is set for good by the grouping you give the account.")
             }
-            .width(min: 80, ideal: 100, max: 140)
+            .width(min: 36, ideal: 100)
             .customizationID("type")
             TableColumn("Grouping", value: \.grouping, comparator: .localizedStandard) { r in
                 Menu {
@@ -305,19 +305,24 @@ struct AccountsView: View {
                 }
                 .menuStyle(.borderlessButton)
             }
-            .width(min: 180, ideal: 280)
+            .width(min: 36, ideal: 280)
             .customizationID("grouping")
             TableColumn("Balance (book)", value: \.balance) { r in
                 Text(Money(cents: r.balance).isZero ? "–" : Money(cents: r.balance).formatted)
                     .monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .width(min: 90, ideal: 120, max: 180)
+            .width(min: 36, ideal: 120)
             .customizationID("balance-(book)")
             TableColumn("Used By", value: \.usedBy) { r in Text(r.usedBy).foregroundStyle(.secondary) }
-                .width(min: 100, ideal: 240)
+                .width(min: 36, ideal: 240)
                 .customizationID("used-by")
         }
+        .background(TableColumnFitter(key: "accounts", contents: [
+            "Account": shown.map(\.number), "Name": shown.map(\.name), "Type": shown.map(\.typeLabel),
+            "Grouping": shown.map { $0.grouping.isEmpty ? "Not grouped" : $0.grouping },
+            "Balance (book)": shown.map { Money(cents: $0.balance).formatted }, "Used By": shown.map(\.usedBy),
+        ], extra: ["Grouping": 26]))
     }
 
     @ViewBuilder
@@ -501,14 +506,14 @@ struct GroupingsView: View {
                 }
                 Table(rows, selection: $selection) {
                     TableColumn("Section") { r in Text(r.depth == 0 ? r.grouping.section : "").foregroundStyle(.secondary) }
-                        .width(min: 120, ideal: 160, max: 220)
+                        .width(min: 36, ideal: 160)
                     TableColumn("Code") { r in
                         Text(r.grouping.code.isEmpty ? e.groupingCode(r.grouping.id) : r.grouping.code)
                             .fontWeight(r.depth == 0 ? .medium : .regular)
                             .monospacedDigit()
                             .foregroundStyle(r.grouping.code.isEmpty ? HierarchicalShapeStyle.tertiary : HierarchicalShapeStyle.primary)
                     }
-                    .width(min: 60, ideal: 80, max: 110)
+                    .width(min: 36, ideal: 80)
                     TableColumn("Name") { r in
                         HStack(spacing: 5) {
                             if r.depth > 0 { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.secondary) }
@@ -516,7 +521,7 @@ struct GroupingsView: View {
                         }
                         .padding(.leading, r.depth > 0 ? 14 : 0)
                     }
-                    .width(min: 200, ideal: 360)
+                    .width(min: 36, ideal: 360)
                     TableColumn("Account Type") { r in
                         if r.depth == 0 {
                             Text(r.grouping.type?.label ?? "Any").foregroundStyle(r.grouping.type == nil ? HierarchicalShapeStyle.tertiary : HierarchicalShapeStyle.primary)
@@ -524,7 +529,7 @@ struct GroupingsView: View {
                             Text(e.groupingType(r.id)?.label ?? "Any").foregroundStyle(.tertiary)
                         }
                     }
-                    .width(min: 80, ideal: 100, max: 130)
+                    .width(min: 36, ideal: 100)
                     TableColumn("Accounts") { r in
                         // A grouping counts the accounts in its subgroups too.
                         let n = (own[r.id] ?? 0) + (r.depth == 0 ? e.subgroups(of: r.id).map { own[$0.id] ?? 0 }.reduce(0, +) : 0)
@@ -532,8 +537,12 @@ struct GroupingsView: View {
                             .monospacedDigit()
                             .foregroundStyle(n == 0 ? HierarchicalShapeStyle.tertiary : HierarchicalShapeStyle.primary)
                     }
-                    .width(min: 70, ideal: 80, max: 100)
+                    .width(min: 36, ideal: 80)
                 }
+                .background(TableColumnFitter(key: "groupings", contents: [
+                    "Section": rows.map(\.grouping.section), "Code": rows.map { $0.grouping.code.isEmpty ? e.groupingCode($0.grouping.id) : $0.grouping.code },
+                    "Name": rows.map(\.grouping.name), "Account Type": rows.map { e.groupingType($0.id)?.label ?? "Any" }, "Accounts": ["000"],
+                ], extra: ["Name": 34]))
                 .contextMenu(forSelectionType: String.self) { ids in
                     if let g = e.grouping(ids.first) {
                         Button("Edit…") { edit(GroupingDraft(g), e) }

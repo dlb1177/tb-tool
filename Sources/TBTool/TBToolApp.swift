@@ -7,6 +7,7 @@ struct TBToolApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel.shared
     @AppStorage(HideZeroToggle.key) private var hideZero = true
+    @AppStorage(AppearanceChoice.key) private var appearance = AppearanceChoice.system.rawValue
 
     var body: some Scene {
         Window("TB Tool", id: "main") {
@@ -48,6 +49,8 @@ struct TBToolApp: App {
                 Button("Export Grouping List…") { model.exportGroupingListPanel(csv: false) }
                     .disabled(model.engagement == nil)
                 Divider()
+                Button("Make Binder Folders in a Folder…") { model.makeStandardFolders(elsewhere: true) }
+                Divider()
                 Button("Show JSON File in Finder") {
                     if let url = model.fileURL { model.reveal(url) }
                 }
@@ -57,6 +60,12 @@ struct TBToolApp: App {
             CommandGroup(before: .sidebar) {
                 Toggle("Hide Zero Balance Rows", isOn: $hideZero)
                     .keyboardShortcut("0", modifiers: [.command, .shift])
+                Picker("Appearance", selection: Binding(get: { appearance }, set: {
+                    appearance = $0
+                    AppearanceChoice.apply()
+                })) {
+                    ForEach(AppearanceChoice.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                }
                 Divider()
             }
             CommandGroup(replacing: .appSettings) {
@@ -85,8 +94,34 @@ struct TBToolApp: App {
     }
 }
 
+/// Light, dark, or whatever the Mac is set to.
+enum AppearanceChoice: String, CaseIterable {
+    case system, light, dark
+
+    static let key = "appearance"
+
+    var label: String {
+        switch self {
+        case .system: return "Automatic (follows the Mac)"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    static func apply() {
+        // Pictures for the manual choose their own.
+        guard !CommandLine.arguments.contains("--tb-snapshot") else { return }
+        switch AppearanceChoice(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .system {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppearanceChoice.apply()
         AppModel.shared.startup()
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--tb-snapshot"), i + 1 < args.count {

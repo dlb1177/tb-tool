@@ -21,7 +21,9 @@ public enum ReportCell: Equatable, Sendable {
 }
 
 public struct ReportRow: Identifiable, Equatable, Sendable {
-    public enum Style: Sendable { case normal, section, subtotal, total }
+    /// `heading` opens a block (a journal entry's number, date and description), `note` is a
+    /// line of plain text under it (a reference), and `blank` is the space between blocks.
+    public enum Style: Sendable { case normal, section, subtotal, total, heading, note, blank }
     public var id: String
     public var cells: [ReportCell]
     public var style: Style = .normal
@@ -36,6 +38,16 @@ public struct ReportRow: Identifiable, Equatable, Sendable {
     /// Set on a row whose amounts are already inside another row of the table (a subgroup under
     /// its grouping), so a total of the rows shown doesn't count them twice.
     public var parentRowID: String? = nil
+    /// Rows that share a block (the rows of one journal entry) are kept on one page when the
+    /// report is printed.
+    public var block: String? = nil
+}
+
+extension ReportRow {
+    /// A plain row, for tables made outside the engine.
+    public init(id: String, cells: [ReportCell]) {
+        self.init(id: id, cells: cells, style: .normal)
+    }
 }
 
 /// A finished report: what the app shows on screen and what every export format is written from.
@@ -370,18 +382,92 @@ public struct Reports {
 
     // MARK: Journal entries
 
-    /// One row per journal line, with the entry's own fields repeated on each row.
+    /// The heading of each kind of entry in the journal report, and the name of its sheet.
+    public static func journalTitle(_ type: JEType) -> (title: String, sheet: String) {
+        switch type {
+        case .adjusting: return ("Adjusting Journal Entries", "AJEs")
+        case .reclassifying: return ("Reclassifying Journal Entries", "RJEs")
+        case .taxOnly: return ("Tax Journal Entries", "TJEs")
+        case .eliminating: return ("Eliminating Journal Entries", "EJEs")
+        }
+    }
+
+    /// A date as it is printed on a report: 12/31/2026.
+    public static func printedDate(_ day: String) -> String {
+        let parts = day.split(separator: "-")
+        guard parts.count == 3, let m = Int(parts[1]), let d = Int(parts[2]) else { return day }
+        return "\(m)/\(d)/\(parts[0])"
+    }
+
+    /// The journal entries set out as a journal: under a heading for each kind, every entry
+    /// stands on its own — its number, date and description on one line, the workpapers it
+    /// refers to under that (index and file name only), then its lines and its total. This is
+    /// what is exported and printed. With `types`, only those kinds.
+    public func journalReport(types: Set<JEType>? = nil) -> ReportTable {
+        let only = types.flatMap { $0.count == 1 ? $0.first : nil }
+        var t = table(only.map { Reports.journalTitle($0).title } ?? "Journal Entries",
+                      sheet: only.map { Reports.journalTitle($0).sheet } ?? "Journal Entries",
+                      columns: [.text("Entry", 78), .text("Trial Balance", 130), .text("Account", 80), .text("Account Name", 270),
+                                .money("Debit"), .money("Credit"), .text("Memo", 240)])
+        let entries = sortedEntries().filter { je in !je.pending && (types.map { $0.contains(je.type) } ?? true) }
+        var grandDebits = Money.zero, grandCredits = Money.zero
+        let kinds = JEType.allCases.filter { type in entries.contains { $0.type == type } }
+        for type in kinds {
+            let title = Reports.journalTitle(type).title
+            t.rows.append(ReportRow(id: "t:\(type.rawValue)", cells: [.text(title.uppercased())], style: .section))
+            var typeDebits = Money.zero, typeCredits = Money.zero
+            for je in entries where je.type == type {
+                t.rows.append(ReportRow(id: "h:\(je.id)", cells: [.text(je.number), .text(Reports.printedDate(je.date)), .text(je.description)],
+                                        style: .heading, entryID: je.id, block: je.id))
+                for (i, ref) in je.references.enumerated() {
+                    t.rows.append(ReportRow(id: "r:\(je.id):\(i)", cells: [.empty, .empty, .text("Ref: \(ref.fileName)")],
+                                            style: .note, entryID: je.id, block: je.id))
+                }
+                for (i, l) in je.lines.enumerated() {
+                    let acct = e.account(l.account)
+                    t.rows.append(ReportRow(id: "\(je.id):\(i)", cells: [
+                        .empty, .text(entityByID[l.entity]?.name ?? l.entity), .text(acct?.number ?? l.account), .text(acct?.name ?? ""),
+                        l.amount.cents > 0 ? .money(l.amount.debit) : .empty,
+                        l.amount.cents < 0 ? .money(l.amount.credit) : .empty,
+                        .text(l.memo),
+                    ], accountID: l.account, entityID: l.entity, entryID: je.id, accountType: acct?.type, block: je.id))
+                }
+                t.rows.append(ReportRow(id: "e:\(je.id)", cells: [.empty, .empty, .empty, .text("Total \(je.number)"),
+                                                                  .money(je.totalDebits), .money(je.totalCredits), .empty],
+                                        style: .subtotal, entryID: je.id, block: je.id))
+                t.rows.append(ReportRow(id: "b:\(je.id)", cells: [], style: .blank))
+                typeDebits += je.totalDebits
+                typeCredits += je.totalCredits
+            }
+            t.rows.append(ReportRow(id: "tt:\(type.rawValue)", cells: [.empty, .empty, .empty, .text("Total \(title.lowercased())"),
+                                                                       .money(typeDebits), .money(typeCredits), .empty], style: .total))
+            if type != kinds.last { t.rows.append(ReportRow(id: "tb:\(type.rawValue)", cells: [], style: .blank)) }
+            grandDebits += typeDebits
+            grandCredits += typeCredits
+        }
+        if kinds.count > 1 {
+            t.rows.append(ReportRow(id: "b:all", cells: [], style: .blank))
+            t.rows.append(ReportRow(id: "total", cells: [.empty, .empty, .empty, .text("Total, all journal entries"),
+                                                         .money(grandDebits), .money(grandCredits), .empty], style: .total))
+        }
+        if entries.isEmpty {
+            t.rows.append(ReportRow(id: "none", cells: [.empty, .empty, .text("No journal entries")], style: .note))
+        }
+        return t
+    }
+
+    /// One row per journal line, with the entry's own fields repeated on each row: the journal
+    /// as data, for the JSON export. References are given by file name (index and name).
     public func journalEntries(types: Set<JEType>? = nil, entityID: String? = nil) -> ReportTable {
         var t = table("Journal Entries", sheet: "Journal Entries",
                       columns: [.text("Entry", 70), .text("Type", 100), .text("Date", 90), .text("Description", 240),
                                 .text("Trial Balance", 130), .text("Account", 76), .text("Account Name", 230),
-                                .money("Debit"), .money("Credit"), .text("Memo", 180), .text("Linked Files", 220),
-                                .text("Next Year", 110)])
+                                .money("Debit"), .money("Credit"), .text("Memo", 180), .text("References", 220)])
         var debits = Money.zero, credits = Money.zero
         for je in sortedEntries() where !je.pending {
             if let types, !types.contains(je.type) { continue }
             if let entityID, !je.lines.contains(where: { $0.entity == entityID }) { continue }
-            let refs = je.references.map { $0.location.isEmpty ? $0.path : "\($0.path) [\($0.location)]" }.joined(separator: "; ")
+            let refs = je.references.map(\.fileName).joined(separator: "; ")
             for (i, l) in je.lines.enumerated() {
                 debits += l.amount.debit
                 credits += l.amount.credit
@@ -391,12 +477,12 @@ public struct Reports {
                     .text(entityByID[l.entity]?.name ?? l.entity), .text(acct?.number ?? l.account), .text(acct?.name ?? ""),
                     l.amount.cents > 0 ? .money(l.amount.debit) : .empty,
                     l.amount.cents < 0 ? .money(l.amount.credit) : .empty,
-                    .text(l.memo), .text(refs), .text(je.rollForward.short),
+                    .text(l.memo), .text(refs),
                 ], accountID: l.account, entityID: l.entity, entryID: je.id, accountType: acct?.type))
             }
         }
         t.rows.append(ReportRow(id: "total", cells: [.empty, .empty, .empty, .text("Total"), .empty, .empty, .empty,
-                                                     .money(debits), .money(credits), .empty, .empty, .empty], style: .total))
+                                                     .money(debits), .money(credits), .empty, .empty], style: .total))
         return t
     }
 
@@ -575,7 +661,11 @@ public struct Reports {
         for ent in e.entities {
             out.append(entityTrialBalance(entityID: ent.id, hideZero: hideZero, prior: prior))
         }
-        out.append(journalEntries())
+        // The journal: every entry together, then a sheet for each kind there is.
+        out.append(journalReport())
+        for type in JEType.allCases where e.journalEntries.contains(where: { $0.type == type && !$0.pending }) {
+            out.append(journalReport(types: [type]))
+        }
         out.append(tidy())
         out.append(chartOfAccounts())
         return out

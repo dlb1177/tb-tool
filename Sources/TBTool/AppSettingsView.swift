@@ -115,16 +115,33 @@ struct AppSettingsView: View {
     @State private var renameText = ""
     @State private var confirmDelete = false
     @AppStorage("settings.tab") private var tab = "groupings"
+    @AppStorage(AppearanceChoice.key) private var appearance = AppearanceChoice.system.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tab) {
-                Text("Grouping Lists").tag("groupings")
-                Text("Binder Layout").tag("binder")
+            ZStack {
+                Picker("", selection: $tab) {
+                    Text("Grouping Lists").tag("groupings")
+                    Text("Binder Layout").tag("binder")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                HStack {
+                    Spacer()
+                    Picker("Appearance", selection: Binding(get: { appearance }, set: {
+                        appearance = $0
+                        AppearanceChoice.apply()
+                    })) {
+                        Text("Automatic").tag(AppearanceChoice.system.rawValue)
+                        Text("Light").tag(AppearanceChoice.light.rawValue)
+                        Text("Dark").tag(AppearanceChoice.dark.rawValue)
+                    }
+                    .fixedSize()
+                    .help("Light, dark, or automatic: whichever the Mac is set to, changing with it. Also in the View menu.")
+                }
+                .padding(.horizontal, 16)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
             .padding(.vertical, 8)
             Divider()
             if tab == "binder" {

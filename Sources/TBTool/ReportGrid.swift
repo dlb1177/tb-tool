@@ -7,6 +7,12 @@ struct GridSort: Equatable {
     var ascending: Bool
 }
 
+/// A sort named by its column's heading, so it can be handed from one grid to another.
+struct NamedSort: Equatable {
+    var title: String
+    var ascending: Bool
+}
+
 /// One switch for the whole app: every trial balance and report screen hides or shows rows whose
 /// amounts are all zero together, and the workbook export follows it.
 struct HideZeroToggle: View {
@@ -31,6 +37,10 @@ struct GridPanel: View {
     let table: ReportTable
     let key: String
     var onActivate: ((ReportRow) -> Void)? = nil
+    /// The sort the grid opens with, if the table has that column.
+    var initialSort: NamedSort? = nil
+    /// Told whenever the person sorts by a column, or goes back to the table's own order.
+    var onSort: ((NamedSort?) -> Void)? = nil
 
     @State private var query = ""
     @State private var filters = FilterSet()
@@ -101,6 +111,14 @@ struct GridPanel: View {
         .onChange(of: table.columns) { _, new in
             if let s = sort, s.column >= new.count { sort = nil }
         }
+        .onChange(of: sort) { _, new in
+            onSort?(new.flatMap { s in s.column < table.columns.count ? NamedSort(title: table.columns[s.column].title, ascending: s.ascending) : nil })
+        }
+        .onAppear {
+            if sort == nil, let initialSort, let i = table.columns.firstIndex(where: { $0.title == initialSort.title }) {
+                sort = GridSort(column: i, ascending: initialSort.ascending)
+            }
+        }
     }
 }
 
@@ -153,6 +171,11 @@ struct DataGrid: NSViewRepresentable {
     var key: String
     @Binding var sort: GridSort?
     var onActivate: ((ReportRow) -> Void)?
+    /// For a grid whose rows are things to act on (the binder's files): the rows that should be
+    /// selected, what to tell when the selection changes, and the menu for a right-click.
+    var selected: Set<String>? = nil
+    var onSelect: ((Set<String>) -> Void)? = nil
+    var menu: ((Set<String>) -> NSMenu?)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -175,6 +198,7 @@ struct DataGrid: NSViewRepresentable {
         tv.target = context.coordinator
         tv.doubleAction = #selector(Coordinator.doubleClicked(_:))
         tv.copyHandler = { [weak coordinator = context.coordinator] in coordinator?.copySelection() }
+        tv.menuProvider = { [weak coordinator = context.coordinator] in coordinator?.rowMenu() }
 
         let rowMenu = NSMenu()
         rowMenu.addItem(withTitle: "Copy", action: #selector(GridTableView.copy(_:)), keyEquivalent: "c")
@@ -230,8 +254,32 @@ struct DataGrid: NSViewRepresentable {
         /// Widths this grid set itself, by column. A column whose width differs was resized by hand.
         private var autoWidths: [String: CGFloat] = [:]
         private var building = false
+        private var syncingSelection = false
 
         init(_ parent: DataGrid) { self.parent = parent }
+
+        private func selectedIDs(_ tv: NSTableView) -> Set<String> {
+            Set(tv.selectedRowIndexes.compactMap { $0 < rows.count ? rows[$0].id : nil })
+        }
+
+        func rowMenu() -> NSMenu? {
+            guard let tv = tableView, let make = parent.menu else { return nil }
+            return make(selectedIDs(tv))
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard !syncingSelection, let tv = tableView, let onSelect = parent.onSelect else { return }
+            let ids = selectedIDs(tv)
+            DispatchQueue.main.async { onSelect(ids) }
+        }
+
+        /// Makes the table's selection the one asked for, without reporting it back.
+        private func syncSelection() {
+            guard let tv = tableView, let want = parent.selected, selectedIDs(tv) != want else { return }
+            syncingSelection = true
+            tv.selectRowIndexes(IndexSet(rows.indices.filter { want.contains(rows[$0].id) }), byExtendingSelection: false)
+            syncingSelection = false
+        }
 
         deinit { NotificationCenter.default.removeObserver(self) }
 
@@ -254,11 +302,16 @@ struct DataGrid: NSViewRepresentable {
                 tv.sortDescriptors = desired
                 syncingSort = false
             }
-            guard changed else { return }
+            guard changed else {
+                syncSelection()
+                return
+            }
             shownTable = t
+            syncingSelection = parent.selected != nil
             tv.reloadData()
-            let reselect = IndexSet(rows.indices.filter { selectedIDs.contains(rows[$0].id) })
-            if !reselect.isEmpty { tv.selectRowIndexes(reselect, byExtendingSelection: false) }
+            let reselect = IndexSet(rows.indices.filter { (parent.selected ?? selectedIDs).contains(rows[$0].id) })
+            tv.selectRowIndexes(reselect, byExtendingSelection: false)
+            syncingSelection = false
             footer?.show(rows: pinned, columns: columns, identifiers: identifiers)
             container?.needsLayout = true
         }
@@ -645,8 +698,35 @@ final class GridFooterView: NSView {
 
 final class GridTableView: NSTableView {
     var copyHandler: (() -> Void)?
+    var menuProvider: (() -> NSMenu?)?
 
     @objc func copy(_ sender: Any?) { copyHandler?() }
+
+    /// A right-click on a row that isn't selected selects it first, as Finder does.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        if row >= 0 {
+            if !selectedRowIndexes.contains(row) { selectRowIndexes([row], byExtendingSelection: false) }
+            if let custom = menuProvider?() { return custom }
+        }
+        return super.menu(for: event)
+    }
+}
+
+/// A menu item that runs a closure.
+final class ActionItem: NSMenuItem {
+    private let run: () -> Void
+
+    init(_ title: String, enabled: Bool = true, _ run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+        isEnabled = enabled
+    }
+
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func fire() { run() }
 }
 
 final class GridRowView: NSTableRowView {

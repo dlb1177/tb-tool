@@ -440,7 +440,7 @@ final class TBCoreTests: XCTestCase {
         try e.post(investmentElimination())
         let tables = Reports(e).workbook()
         let names = XLSXWriter.sheetNames(tables)
-        XCTAssertEqual(names, ["Consolidated", "Groupings", "Grouping Detail", "Ashford", "Brighton", "Clayton", "West Clayton", "Parent", "Journal Entries", "Data", "Accounts"])
+        XCTAssertEqual(names, ["Consolidated", "Groupings", "Grouping Detail", "Ashford", "Brighton", "Clayton", "West Clayton", "Parent", "Journal Entries", "EJEs", "Data", "Accounts"])
         let data = Exporter.xlsx(tables)
         XCTAssertEqual(Array(data.prefix(4)), [0x50, 0x4B, 0x03, 0x04])
         XCTAssertEqual(Zip.crc32(Data("123456789".utf8)), 0xCBF4_3926)

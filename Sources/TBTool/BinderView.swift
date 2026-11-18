@@ -5,19 +5,90 @@ import SwiftUI
 import TBCore
 import UniformTypeIdentifiers
 
-/// What the Binder screen remembers while it is open: the selected item, the file being
-/// previewed, and where a dragged file is hovering.
+/// Which files the Binder screen shows, by how far they have been signed off.
+enum BinderStatus: String, CaseIterable {
+    case any, notPrepared, prepared, notReviewed, reviewed, notSecond, second, changed
+
+    var label: String {
+        switch self {
+        case .any: return "Any Status"
+        case .notPrepared: return "Not Prepared"
+        case .prepared: return "Prepared"
+        case .notReviewed: return "Not Reviewed"
+        case .reviewed: return "Reviewed"
+        case .notSecond: return "Not Second Reviewed"
+        case .second: return "Second Reviewed"
+        case .changed: return "Changed Since Sign-off"
+        }
+    }
+}
+
+/// What the Binder screen remembers while it is open: what is selected, the file being
+/// previewed, what is being searched for, and where a dragged file is hovering.
 final class BinderScreen: ObservableObject {
-    @Published var selection: String?
+    @Published var selection: Set<String> = []
+    /// The row last clicked: where a Shift-click's range starts, and what Space previews.
+    @Published var anchor: String?
     @Published var preview: URL?
     @Published var hover: BinderDrop?
     @Published var hoverBackground = false
     @Published var onlyProblems = false
+    @Published var query = ""
+    @Published var status = BinderStatus.any
+    @Published var sort: GridSort?
     var monitor: Any?
 
-    /// The rows on screen: everything, less what sits inside a closed folder.
-    func rows(_ tree: BinderTree, collapsed: Set<String>, problems: Set<String>) -> [BinderItem] {
-        if onlyProblems { return tree.all.filter { problems.contains($0.path) } }
+    var filtering: Bool { onlyProblems || status != .any || !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The one item to act on when an action takes one: the row last clicked, if it is selected.
+    var primary: String? {
+        if let anchor, selection.contains(anchor) { return anchor }
+        return selection.count == 1 ? selection.first : nil
+    }
+
+    func select(_ path: String?) {
+        selection = path.map { [$0] } ?? []
+        anchor = path
+    }
+
+    /// Whether a file passes the search box and the status menu.
+    func matches(_ item: BinderItem, e: Engagement?, stale: Set<String>, problems: Set<String>) -> Bool {
+        if onlyProblems && !problems.contains(item.path) { return false }
+        let terms = query.lowercased().split(whereSeparator: \.isWhitespace)
+        if !terms.isEmpty {
+            let text = item.path.lowercased()
+            if !terms.allSatisfy({ text.contains($0) }) { return false }
+        }
+        guard status != .any else { return true }
+        guard !item.isFolder, !item.isPlaceholder else { return false }
+        func has(_ level: SignOffLevel) -> Bool { e?.signOff(level, for: item.path) != nil }
+        switch status {
+        case .any: return true
+        case .notPrepared: return !has(.prepared)
+        case .prepared: return has(.prepared)
+        case .notReviewed: return !has(.reviewed)
+        case .reviewed: return has(.reviewed)
+        case .notSecond: return !has(.secondReviewed)
+        case .second: return has(.secondReviewed)
+        case .changed: return SignOffLevel.allCases.contains { stale.contains(AppModel.signOffKey(item.path, $0)) }
+        }
+    }
+
+    /// The rows of the nested view. While searching or filtering: the files that pass, each
+    /// under the folders it is in. Otherwise everything, less what sits inside a closed folder.
+    func rows(_ tree: BinderTree, collapsed: Set<String>, e: Engagement?, stale: Set<String>, problems: Set<String>) -> [BinderItem] {
+        if filtering {
+            let hits = tree.all.filter { (status == .any || !$0.isFolder) && matches($0, e: e, stale: stale, problems: problems) }
+            var keep = Set(hits.map(\.path))
+            for item in hits {
+                var parent = item.parentPath
+                while !parent.isEmpty {
+                    keep.insert(parent)
+                    parent = (parent as NSString).deletingLastPathComponent
+                }
+            }
+            return tree.all.filter { keep.contains($0.path) }
+        }
         guard !collapsed.isEmpty else { return tree.all }
         return tree.all.filter { item in
             var parent = item.parentPath
@@ -30,65 +101,100 @@ final class BinderScreen: ObservableObject {
     }
 }
 
-/// The whole binder for the year, opened out: every folder and file with its index. Files are
-/// brought in, moved, renumbered, previewed and signed off here instead of in Finder.
+/// The whole binder for the year: every folder and file with its index. Files are brought in,
+/// moved, renumbered, previewed, opened, signed off and removed here instead of in Finder. It
+/// can be seen as folders opened out, or as one flat list of every file.
 struct BinderView: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var screen = BinderScreen()
+    @AppStorage("binder.flat") private var flat = false
 
     static let rowHeight: CGFloat = 25
+
+    private func problems(_ tree: BinderTree) -> Set<String> {
+        Set(tree.duplicateIndexes.flatMap { $0.items.map(\.path) }).union(tree.unindexed.map(\.path)).union(tree.unfiled.map(\.path))
+            .union(model.staleSignOffs.map { $0.components(separatedBy: "\u{1F}")[0] })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             if let tree = model.binder {
                 let duplicates = Set(tree.duplicateIndexes.flatMap { $0.items.map(\.path) })
-                let problems = duplicates.union(tree.unindexed.map(\.path)).union(tree.unfiled.map(\.path))
-                    .union(model.staleSignOffs.map { $0.components(separatedBy: "\u{1F}")[0] })
-                let rows = screen.rows(tree, collapsed: model.collapsedFolders, problems: problems)
-                let picked = screen.selection.flatMap { tree.item($0) }
+                let flagged = problems(tree)
+                let picked = screen.selection.compactMap { tree.item($0) }
+                let one = screen.primary.flatMap { tree.item($0) }
                 PageHeader(title: "Binder", subtitle: subtitle(tree)) {
-                    Button("Set Index…") { if let p = picked { model.showSetIndex(for: p.path) } }
-                        .disabled(picked == nil || (picked.map { !$0.isFolder && $0.parentPath.isEmpty } ?? true))
-                        .help("Give the selected item an index, or change the one it has")
                     Menu {
-                        Button("Index Every Unindexed File") {
+                        Button("New Folder…") { model.newBinderFolder(in: "") }
+                        if let one, one.isFolder {
+                            Button("New Folder in “\(one.title)”…") { model.newBinderFolder(in: one.path) }
+                        }
+                        Button("New Placeholder…") { if let home = home(one) { model.newPlaceholder(in: home) } }
+                            .disabled(home(one) == nil)
+                        Divider()
+                        Button("Add the Standard Folders to This Binder…") { model.makeStandardFolders(elsewhere: false) }
+                        Button("Make the Standard Folders in Another Folder…") { model.makeStandardFolders(elsewhere: true) }
+                    } label: {
+                        Label("New", systemImage: "plus")
+                    }
+                    .fixedSize()
+                    .help("A folder, a subfolder, a placeholder, or the standard set of binder folders")
+                    Menu {
+                        Button("Set Index…") { if let one { model.showSetIndex(for: one.path) } }
+                            .disabled(one == nil || (one.map { !$0.isFolder && $0.parentPath.isEmpty } ?? true))
+                        Button(picked.count > 1 ? "Index the \(picked.count) Selected Files" : "Index the Selected File") {
+                            model.applyBinderRenames(BinderIndexer.index(screen.selection, in: tree), actionName: "Index Files")
+                        }
+                        .disabled(BinderIndexer.index(screen.selection, in: tree).isEmpty)
+                        if let one, one.index != nil {
+                            Button("Remove the Index from “\(one.displayTitle)”") {
+                                model.applyBinderRenames(BinderIndexer.removeIndex(from: one.path, in: tree), actionName: "Remove Index")
+                            }
+                        }
+                        Divider()
+                        if let folder = folder(one, tree) {
+                            Button("Close the Gaps in “\(folder.title)”") {
+                                model.applyBinderRenames(BinderIndexer.closeGaps(in: folder.path, tree: tree), actionName: "Close Gaps")
+                            }
+                            .disabled(BinderIndexer.closeGaps(in: folder.path, tree: tree).isEmpty)
+                            Button("Index the Unindexed Files in “\(folder.title)”") {
+                                model.applyBinderRenames(BinderIndexer.indexUnindexed(under: folder.path, in: tree), actionName: "Index Files")
+                            }
+                            .disabled(BinderIndexer.indexUnindexed(under: folder.path, in: tree).isEmpty)
+                        }
+                        Button("Index Every Unindexed File in the Binder") {
                             model.applyBinderRenames(BinderIndexer.indexUnindexed(under: "", in: tree), actionName: "Index Files")
                         }
                         .disabled(BinderIndexer.indexUnindexed(under: "", in: tree).isEmpty)
-                        if let p = picked, p.isFolder {
-                            Button("Index the Unindexed Files in “\(p.title)”") {
-                                model.applyBinderRenames(BinderIndexer.indexUnindexed(under: p.path, in: tree), actionName: "Index Files")
-                            }
-                            .disabled(BinderIndexer.indexUnindexed(under: p.path, in: tree).isEmpty)
-                            Button("Close the Gaps in “\(p.title)”") {
-                                model.applyBinderRenames(BinderIndexer.closeGaps(in: p.path, tree: tree), actionName: "Close Gaps")
-                            }
-                            .disabled(BinderIndexer.closeGaps(in: p.path, tree: tree).isEmpty)
-                        }
-                        if let p = picked, p.index != nil {
-                            Divider()
-                            Button("Remove the Index from “\(p.displayTitle)”") {
-                                model.applyBinderRenames(BinderIndexer.removeIndex(from: p.path, in: tree), actionName: "Remove Index")
-                            }
-                        }
                     } label: {
                         Label("Index", systemImage: "number")
                     }
                     .fixedSize()
+                    .help("Give the selection index numbers, or renumber a folder to close its gaps")
+                    Button("Open") { model.openBinderItems(screen.selection) }
+                        .disabled(picked.isEmpty)
+                        .help("Open what is selected (⌘O)")
                     Button {
-                        if let p = picked, !p.isFolder { screen.preview = tree.url(p) }
+                        if let one, !one.isFolder { screen.preview = tree.url(one) }
                     } label: {
                         Label("Preview", systemImage: "eye")
                     }
-                    .disabled(picked == nil || picked?.isFolder == true)
+                    .disabled(one == nil || one?.isFolder == true)
                     .help("Look at the selected file without opening it. Or press Space.")
+                    Button {
+                        model.trashBinderItems(screen.selection)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .disabled(picked.isEmpty)
+                    .help("Move what is selected to the Trash (⌘⌫)")
                     Button {
                         model.refreshBinder()
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
                     .help("Read the folder again. It is also read whenever you come back to TB Tool.")
-                    Button("Show in Finder") { model.reveal(picked.map { tree.url($0) } ?? tree.root) }
+                    Button("Show in Finder") { model.reveal(one.map { tree.url($0) } ?? tree.root) }
                 }
                 Divider()
                 bar(tree)
@@ -98,7 +204,7 @@ struct BinderView: View {
                     VStack(spacing: 10) {
                         EmptyState(title: "Nothing in the binder yet",
                                    message: "The binder is the folder this trial balance is in. Make the standard folders, or drop folders and files here.",
-                                   button: "Make the Standard Folders") { model.createBinderFolders() }
+                                   button: "Make the Standard Folders") { model.makeStandardFolders(elsewhere: false) }
                             .frame(maxHeight: 180)
                         Spacer()
                     }
@@ -109,11 +215,20 @@ struct BinderView: View {
                         load(providers) { urls in dropped(urls, nil, tree) }
                         return true
                     }
+                } else if flat {
+                    flatList(tree, flagged: flagged)
                 } else {
-                    list(rows, tree: tree, duplicates: duplicates)
+                    let rows = screen.rows(tree, collapsed: model.collapsedFolders, e: model.engagement, stale: model.staleSignOffs, problems: flagged)
+                    if rows.isEmpty {
+                        EmptyState(title: "No files match", message: "Nothing in the binder passes the search and the status chosen above.")
+                    } else {
+                        list(rows, tree: tree, duplicates: duplicates)
+                    }
                 }
             } else {
-                PageHeader(title: "Binder", subtitle: "") { EmptyView() }
+                PageHeader(title: "Binder", subtitle: "") {
+                    Button("Make the Standard Folders in a Folder…") { model.makeStandardFolders(elsewhere: true) }
+                }
                 Divider()
                 EmptyState(title: "This folder isn't being treated as a binder",
                            message: "The binder is the folder the trial balance file is in — one folder per client per year. This file sits in a general folder (your home folder, Desktop, Documents or Downloads), so what is beside it isn't read as workpapers. Move the file into the year's folder for this client.")
@@ -124,7 +239,15 @@ struct BinderView: View {
             // Arrowing through files in the preview moves the selection along with it.
             guard let url, let tree = model.binder else { return }
             let root = tree.root.resolvingSymlinksInPath().path, path = url.resolvingSymlinksInPath().path
-            if path.hasPrefix(root + "/") { screen.selection = String(path.dropFirst(root.count + 1)) }
+            if path.hasPrefix(root + "/") {
+                let relative = String(path.dropFirst(root.count + 1))
+                if screen.primary != relative { screen.select(relative) }
+            }
+        }
+        .onChange(of: model.binder) { _, tree in
+            // What was renamed or removed is no longer selected.
+            let here = Set(tree?.all.map(\.path) ?? [])
+            if !screen.selection.isSubset(of: here) { screen.selection.formIntersection(here) }
         }
         .onAppear {
             model.refreshBinder()
@@ -137,35 +260,82 @@ struct BinderView: View {
         }
     }
 
+    /// The folder a new placeholder goes in: the selected folder, or the folder the selected file is in.
+    private func home(_ item: BinderItem?) -> String? {
+        guard let item else { return nil }
+        if item.isFolder { return item.path }
+        return item.parentPath.isEmpty ? nil : item.parentPath
+    }
+
+    private func folder(_ item: BinderItem?, _ tree: BinderTree) -> BinderItem? {
+        home(item).flatMap { tree.item($0) }
+    }
+
     private func subtitle(_ tree: BinderTree) -> String {
         let files = tree.files.count, folders = tree.folders.count
         return "\(model.displayPath(tree.root)) · \(folders) folder\(folders == 1 ? "" : "s"), \(files) file\(files == 1 ? "" : "s")"
             + (tree.truncated ? " · too large to read in full" : "")
     }
 
-    /// The strip under the header: open and close every folder, and what the marks mean.
+    /// The strip under the header: the two views, opening and closing folders, the search box
+    /// and the status menu.
     private func bar(_ tree: BinderTree) -> some View {
         let signed = Set(model.engagement?.signOffs.map(\.path) ?? []).count
         return HStack(spacing: 10) {
-            Button {
-                model.collapsedFolders = []
-            } label: {
-                Label("Expand All", systemImage: "chevron.down.2")
+            Picker("", selection: $flat) {
+                Text("Folders").tag(false)
+                Text("All Files").tag(true)
             }
-            .disabled(model.collapsedFolders.isEmpty || screen.onlyProblems)
-            Button {
-                model.collapsedFolders = Set(tree.folders.map(\.path))
-            } label: {
-                Label("Collapse All", systemImage: "chevron.right.2")
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Folders opened out, or every file in one flat list with its folder beside it")
+            if !flat {
+                Button {
+                    model.collapsedFolders = []
+                } label: {
+                    Label("Expand All", systemImage: "chevron.down.2")
+                }
+                .disabled(model.collapsedFolders.isEmpty || screen.filtering)
+                Button {
+                    model.collapsedFolders = Set(tree.folders.map(\.path))
+                } label: {
+                    Label("Collapse All", systemImage: "chevron.right.2")
+                }
+                .disabled(tree.folders.isEmpty || screen.filtering)
             }
-            .disabled(tree.folders.isEmpty || screen.onlyProblems)
-            Toggle("Only what needs attention", isOn: $screen.onlyProblems)
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search files — index, name, folder…", text: $screen.query)
+                    .textFieldStyle(.plain)
+                if !screen.query.isEmpty {
+                    Button {
+                        screen.query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+            .frame(maxWidth: 280)
+            Picker("", selection: $screen.status) {
+                ForEach(BinderStatus.allCases, id: \.self) { s in
+                    Text(s.label).tag(s)
+                    if s == .any || s == .second { Divider() }
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("Show only the files at this point of sign-off")
+            Toggle("Needs attention", isOn: $screen.onlyProblems)
                 .toggleStyle(.checkbox)
                 .fixedSize()
-            Spacer()
-            Text("Drop files on a folder to add them · drag a file to move or renumber it · Space previews")
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .help("Only loose files, items with no index, numbers used twice, and workpapers changed since sign-off")
+            Spacer(minLength: 4)
+            if screen.selection.count > 1 { Text("\(screen.selection.count) selected").foregroundStyle(.secondary) }
             Text("\(signed) signed off")
                 .foregroundStyle(.secondary)
                 .help("P is prepared, R is reviewed, 2R is second reviewed. Click a mark on a file to sign it off as yourself.")
@@ -194,14 +364,91 @@ struct BinderView: View {
         }
     }
 
-    // MARK: The list
+    // MARK: Every file in one list
+
+    private func flatList(_ tree: BinderTree, flagged: Set<String>) -> some View {
+        let e = model.engagement
+        let files = tree.files.filter { screen.matches($0, e: e, stale: model.staleSignOffs, problems: flagged) }
+        var table = ReportTable(title: "Binder", subtitle: "", sheetName: "Binder", flat: true,
+                                columns: [.text("Index", 70), .text("File", 280), .text("Folder", 260)]
+                                    + SignOffLevel.allCases.map { .text($0.label, 110) } + [.text("Tags", 120)])
+        for item in files {
+            var cells: [ReportCell] = [.text(item.index?.text ?? (item.parentPath.isEmpty ? "not filed" : "")),
+                                       .text(item.isPlaceholder ? "\(item.displayTitle) (placeholder)" : item.title),
+                                       .text(item.parentPath)]
+            for level in SignOffLevel.allCases {
+                if let mark = e?.signOff(level, for: item.path) {
+                    let stale = model.staleSignOffs.contains(AppModel.signOffKey(item.path, level))
+                    cells.append(.text("\(SignOffMark.initials(mark.actor.display)) \(Stamp.day(mark.at))" + (stale ? " — changed since" : "")))
+                } else {
+                    cells.append(.empty)
+                }
+            }
+            cells.append(.text(item.tags.joined(separator: ", ")))
+            table.rows.append(ReportRow(id: item.path, cells: cells))
+        }
+        let shown = screen.sort.map { table.sorted(by: $0.column, ascending: $0.ascending) } ?? table
+        return VStack(spacing: 0) {
+            if files.isEmpty {
+                EmptyState(title: "No files match", message: "Nothing in the binder passes the search and the status chosen above.")
+            } else {
+                DataGrid(table: shown, key: "binder.flat", sort: $screen.sort, onActivate: { row in
+                    if let item = tree.item(row.id) { NSWorkspace.shared.open(tree.url(item)) }
+                }, selected: screen.selection, onSelect: { ids in
+                    if screen.selection != ids {
+                        screen.selection = ids
+                        if !ids.contains(screen.anchor ?? "") { screen.anchor = ids.count == 1 ? ids.first : nil }
+                    }
+                }, menu: { ids in flatMenu(ids, tree) })
+            }
+        }
+    }
+
+    private func flatMenu(_ ids: Set<String>, _ tree: BinderTree) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let items = ids.compactMap { tree.item($0) }
+        let one = items.count == 1 ? items[0] : nil
+        menu.addItem(ActionItem(items.count > 1 ? "Open \(items.count) Files" : "Open", enabled: !items.isEmpty) { model.openBinderItems(ids) })
+        if let one {
+            menu.addItem(ActionItem("Preview") {
+                screen.select(one.path)
+                screen.preview = tree.url(one)
+            })
+            menu.addItem(ActionItem("Show in Finder") { model.reveal(tree.url(one)) })
+            menu.addItem(.separator())
+            menu.addItem(ActionItem(one.index == nil ? "Set Index…" : "Change Index…", enabled: !one.parentPath.isEmpty) { model.showSetIndex(for: one.path) })
+            menu.addItem(ActionItem("Rename…") { model.renameBinderItem(one.path) })
+        } else {
+            menu.addItem(.separator())
+        }
+        let renames = BinderIndexer.index(ids, in: tree)
+        if !renames.isEmpty {
+            menu.addItem(ActionItem(renames.count > 1 ? "Index the \(renames.count) Unindexed Files" : "Index This File") {
+                model.applyBinderRenames(renames, actionName: "Index Files")
+            })
+        }
+        menu.addItem(.separator())
+        for level in SignOffLevel.allCases {
+            if let one, model.engagement?.signOff(level, for: one.path) != nil {
+                menu.addItem(ActionItem("Remove the “\(level.label)” Mark…") { model.toggleSignOff(level, on: one.path) })
+            } else {
+                menu.addItem(ActionItem("Mark as \(level.label)", enabled: items.contains { !$0.isPlaceholder }) { model.markSignOff(level, on: ids) })
+            }
+        }
+        menu.addItem(.separator())
+        menu.addItem(ActionItem("Move to Trash", enabled: !items.isEmpty) { model.trashBinderItems(ids) })
+        return menu
+    }
+
+    // MARK: The folders opened out
 
     private func list(_ rows: [BinderItem], tree: BinderTree, duplicates: Set<String>) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.path) { n, item in
-                        rowView(item, tree: tree, duplicate: duplicates.contains(item.path), stripe: n % 2 == 1)
+                        rowView(item, tree: tree, rows: rows, duplicate: duplicates.contains(item.path), stripe: n % 2 == 1)
                             .id(item.path)
                     }
                 }
@@ -210,7 +457,7 @@ struct BinderView: View {
                 Color.clear
                     .frame(maxWidth: .infinity, minHeight: 80)
                     .contentShape(Rectangle())
-                    .onTapGesture { screen.selection = nil }
+                    .onTapGesture { screen.select(nil) }
                     .onDrop(of: [.fileURL], isTargeted: $screen.hoverBackground) { providers in
                         load(providers) { urls in dropped(urls, nil, tree) }
                         return true
@@ -218,16 +465,31 @@ struct BinderView: View {
             }
             .background(Color(nsColor: .textBackgroundColor))
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor, lineWidth: 2).opacity(screen.hoverBackground ? 1 : 0).padding(2))
-            .onChange(of: screen.selection) { _, path in
+            .onChange(of: screen.anchor) { _, path in
                 if let path { proxy.scrollTo(path) }
             }
         }
     }
 
-    private func rowView(_ item: BinderItem, tree: BinderTree, duplicate: Bool, stripe: Bool) -> some View {
+    /// A click selects; ⌘-click adds or removes one; ⇧-click takes everything from the last
+    /// click to this one.
+    private func clicked(_ item: BinderItem, in rows: [BinderItem]) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if screen.selection.contains(item.path) { screen.selection.remove(item.path) } else { screen.selection.insert(item.path) }
+            screen.anchor = item.path
+        } else if flags.contains(.shift), let from = screen.anchor, let a = rows.firstIndex(where: { $0.path == from }),
+                  let b = rows.firstIndex(where: { $0.path == item.path }) {
+            screen.selection = Set(rows[min(a, b)...max(a, b)].map(\.path))
+        } else {
+            screen.select(item.path)
+        }
+    }
+
+    private func rowView(_ item: BinderItem, tree: BinderTree, rows: [BinderItem], duplicate: Bool, stripe: Bool) -> some View {
         let loose = !item.isFolder && item.parentPath.isEmpty
-        let selected = screen.selection == item.path
-        let closed = model.collapsedFolders.contains(item.path)
+        let selected = screen.selection.contains(item.path)
+        let closed = model.collapsedFolders.contains(item.path) && !screen.filtering
         let hover = screen.hover?.target == item.path ? screen.hover : nil
         let primary: Color = selected ? .white : .primary
         let secondary: Color = selected ? .white.opacity(0.8) : .secondary
@@ -245,6 +507,7 @@ struct BinderView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(screen.filtering)
                     .help(closed ? "Open this folder" : "Close this folder")
                 } else {
                     Color.clear.frame(width: 14)
@@ -262,7 +525,7 @@ struct BinderView: View {
                 }
             }
             .frame(width: 70, alignment: .leading)
-            Image(systemName: item.isFolder ? (closed ? "folder.fill" : "folder.fill") : (item.isPlaceholder ? "doc.badge.ellipsis" : "doc"))
+            Image(systemName: item.isFolder ? "folder.fill" : (item.isPlaceholder ? "doc.badge.ellipsis" : "doc"))
                 .foregroundStyle(selected ? Color.white : (item.isFolder ? Color.accentColor : Color.secondary))
                 .frame(width: 18)
             Text(item.displayTitle)
@@ -278,7 +541,7 @@ struct BinderView: View {
                 Text("placeholder").font(.caption).padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Capsule().fill(selected ? Color.white.opacity(0.2) : Color.primary.opacity(0.08)))
                     .foregroundStyle(primary)
-                    .help("A stand-in from the roll forward: the document hasn't been added for this year yet. Drag the document onto it when it arrives.")
+                    .help("A stand-in for a document that hasn't arrived. Drag the document onto it when it does.")
             }
             if duplicate {
                 Text("number used twice").font(.caption).foregroundStyle(selected ? Color.white : Color.orange)
@@ -311,7 +574,7 @@ struct BinderView: View {
             }
         }
         .contentShape(Rectangle())
-        .gesture(TapGesture().onEnded { screen.selection = item.path })
+        .gesture(TapGesture().onEnded { clicked(item, in: rows) })
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             if item.isFolder { toggle(item.path) } else { NSWorkspace.shared.open(tree.url(item)) }
         })
@@ -323,9 +586,9 @@ struct BinderView: View {
             if item.isFolder {
                 row
             } else {
-                // A file can be dragged to a new place here, or out to Finder or another app.
+                // A file can be dragged to a new place in the list.
                 row.onDrag {
-                    screen.selection = item.path
+                    if !screen.selection.contains(item.path) { screen.select(item.path) }
                     return NSItemProvider(object: tree.url(item) as NSURL)
                 }
             }
@@ -360,8 +623,10 @@ struct BinderView: View {
         group.notify(queue: .main) { then(urls.compactMap { $0 }) }
     }
 
-    /// A file from the binder itself is being moved: show what that does and ask. Files from
-    /// anywhere else are being added: ask how to number them.
+    /// A file from the binder itself is being moved. If only it has to be renamed (it lands on
+    /// a free number, or is filed in a folder) that is simply done; if other files have to be
+    /// renumbered, the move is shown first. Files from anywhere else are being added: one is
+    /// asked about, several come in unindexed, to be numbered afterwards.
     private func dropped(_ urls: [URL], _ drop: BinderDrop?, _ tree: BinderTree) {
         let root = tree.root.resolvingSymlinksInPath().path
         func inside(_ u: URL) -> String? {
@@ -369,74 +634,119 @@ struct BinderView: View {
             return p.hasPrefix(root + "/") ? String(p.dropFirst(root.count + 1)) : nil
         }
         let outside = urls.filter { inside($0) == nil }
+        let target = drop.flatMap { tree.item($0.target) }
         if outside.isEmpty {
-            guard let drop, let path = urls.first.flatMap(inside) else { return }
-            if BinderIndexer.move(path, drop, in: tree).isEmpty {
+            guard let drop, let target, let path = urls.first.flatMap(inside) else { return }
+            if target.isPlaceholder && drop == .onto(target.path) && path != target.path {
+                model.showReplacePlaceholder(.inside(path), placeholder: target.path)
+                return
+            }
+            let renames = BinderIndexer.move(path, drop, in: tree)
+            if renames.isEmpty {
                 model.status = "Nothing to move: “\((path as NSString).lastPathComponent)” is already there."
+            } else if renames.count == 1 && renames[0].from == path {
+                model.applyBinderMove(renames)
             } else {
                 model.showBinderMove(path, drop)
             }
             return
         }
-        var folderPath = ""
+        let folderPath = target.map { $0.isFolder ? $0.path : $0.parentPath } ?? ""
+        if outside.count > 1 {
+            // Several at once: they come in as they are, to be selected and indexed afterwards.
+            if model.addToBinder(outside, folderPath: folderPath, start: nil, copy: UserDefaults.standard.bool(forKey: "binder.addCopies")), !folderPath.isEmpty {
+                let names = Set(outside.map { folderPath + "/" + $0.lastPathComponent })
+                screen.selection = names
+                screen.anchor = nil
+                model.status = "Added \(outside.count) files without an index. They are selected: choose Index ▸ Index the Selected Files to number them."
+            }
+            return
+        }
+        if let drop, let target, target.isPlaceholder, drop == .onto(target.path) {
+            model.showReplacePlaceholder(.outside(outside[0]), placeholder: target.path)
+            return
+        }
+        // Let go between two files with a number free between them: that number is the offer.
         var at: BinderIndex?
-        if let drop, let target = tree.item(drop.target) {
-            folderPath = target.isFolder ? target.path : target.parentPath
-            // Let go above or below an indexed file: offer that spot as the custom number.
-            if !target.isFolder, let index = target.index, let suffix = index.suffix {
-                if drop == .before(target.path) { at = index }
-                if drop == .after(target.path) { at = BinderIndex(prefix: index.prefix, suffix: suffix + 1, width: index.width) }
+        var free = false
+        if let drop, let target, !target.isFolder, let index = target.index, let suffix = index.suffix {
+            if let gap = BinderIndexer.freeIndex(at: drop, in: tree) {
+                at = gap
+                free = true
+            } else if drop == .before(target.path) {
+                at = index
+            } else if drop == .after(target.path) {
+                at = BinderIndex(prefix: index.prefix, suffix: suffix + 1, width: index.width)
             }
         }
-        model.showAddToBinder(outside, folderPath: folderPath, suggested: at)
+        model.showAddToBinder(outside, folderPath: folderPath, suggested: at, preferSuggested: free)
     }
 
     // MARK: Keys
 
     /// Space previews the selected file (and closes the preview), the arrows move through the
-    /// list, and ← → close and open a folder — as in Finder.
+    /// list, ← → close and open a folder, ⌘O opens and ⌘⌫ moves to the Trash — as in Finder.
     private func installKeys() {
         guard screen.monitor == nil else { return }
         screen.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak screen, weak model] event in
             guard let screen, let model, model.selection == .binder, let tree = model.binder else { return event }
-            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
             let inPreview = event.window is QLPreviewPanel
             let inMain = event.window?.identifier?.rawValue.hasPrefix("main") ?? false
             guard inPreview || (inMain && !(event.window?.firstResponder is NSText)) else { return event }
-            let rows = screen.rows(tree, collapsed: model.collapsedFolders, problems: [])
-            let at = screen.selection.flatMap { s in rows.firstIndex { $0.path == s } }
-            func select(_ item: BinderItem) {
-                screen.selection = item.path
-                if screen.preview != nil { screen.preview = item.isFolder ? screen.preview : tree.url(item) }
+            let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            let isFlat = UserDefaults.standard.bool(forKey: "binder.flat")
+            if flags == .command {
+                switch event.keyCode {
+                case 31 where !screen.selection.isEmpty: // ⌘O
+                    model.openBinderItems(screen.selection)
+                    return nil
+                case 51 where !screen.selection.isEmpty: // ⌘⌫
+                    model.trashBinderItems(screen.selection)
+                    return nil
+                case 0 where !isFlat: // ⌘A
+                    screen.selection = Set(tree.all.map(\.path))
+                    return nil
+                default: return event
+                }
+            }
+            guard flags.isEmpty || flags == .shift else { return event }
+            let flagged = Set(tree.duplicateIndexes.flatMap { $0.items.map(\.path) }).union(tree.unindexed.map(\.path)).union(tree.unfiled.map(\.path))
+                .union(model.staleSignOffs.map { $0.components(separatedBy: "\u{1F}")[0] })
+            let rows = isFlat ? tree.files : screen.rows(tree, collapsed: model.collapsedFolders, e: model.engagement, stale: model.staleSignOffs, problems: flagged)
+            let at = screen.primary.flatMap { s in rows.firstIndex { $0.path == s } }
+            func go(_ item: BinderItem) {
+                if flags == .shift { screen.selection.insert(item.path) } else { screen.selection = [item.path] }
+                screen.anchor = item.path
+                if screen.preview != nil, !item.isFolder { screen.preview = tree.url(item) }
             }
             switch event.keyCode {
             case 49: // Space
                 if screen.preview != nil {
                     screen.preview = nil
-                } else if let item = screen.selection.flatMap({ tree.item($0) }), !item.isFolder {
+                } else if let item = screen.primary.flatMap({ tree.item($0) }), !item.isFolder {
                     screen.preview = tree.url(item)
                 } else {
                     return event
                 }
                 return nil
-            case 125: // ↓
-                guard !screen.onlyProblems, !rows.isEmpty else { return event }
-                select(rows[min((at ?? -1) + 1, rows.count - 1)])
+            case 125 where !isFlat || inPreview: // ↓
+                guard !rows.isEmpty else { return event }
+                go(rows[min((at ?? -1) + 1, rows.count - 1)])
                 return nil
-            case 126: // ↑
-                guard !screen.onlyProblems, !rows.isEmpty else { return event }
-                select(rows[max((at ?? 1) - 1, 0)])
+            case 126 where !isFlat || inPreview: // ↑
+                guard !rows.isEmpty else { return event }
+                go(rows[max((at ?? 1) - 1, 0)])
                 return nil
-            case 123: // ←
-                guard !inPreview, let item = screen.selection.flatMap({ tree.item($0) }) else { return event }
+            case 123 where !isFlat: // ←
+                guard !inPreview, let item = screen.primary.flatMap({ tree.item($0) }) else { return event }
                 if item.isFolder && !model.collapsedFolders.contains(item.path) {
                     model.collapsedFolders.insert(item.path)
                 } else if !item.parentPath.isEmpty {
-                    screen.selection = item.parentPath
+                    screen.select(item.parentPath)
                 }
                 return nil
-            case 124: // →
-                guard !inPreview, let item = screen.selection.flatMap({ tree.item($0) }), item.isFolder else { return event }
+            case 124 where !isFlat: // →
+                guard !inPreview, let item = screen.primary.flatMap({ tree.item($0) }), item.isFolder else { return event }
                 model.collapsedFolders.remove(item.path)
                 return nil
             default:
@@ -449,13 +759,41 @@ struct BinderView: View {
 
     @ViewBuilder
     private func menu(_ item: BinderItem, _ tree: BinderTree) -> some View {
+        // A right-click on one of several selected rows is about all of them.
+        let several = screen.selection.contains(item.path) && screen.selection.count > 1
+        if several {
+            let ids = screen.selection
+            let renames = BinderIndexer.index(ids, in: tree)
+            Button("Open \(ids.count) Items") { model.openBinderItems(ids) }
+            Divider()
+            Button(renames.isEmpty ? "Index the Selected Files" : "Index the \(renames.count) Unindexed File\(renames.count == 1 ? "" : "s")") {
+                model.applyBinderRenames(renames, actionName: "Index Files")
+            }
+            .disabled(renames.isEmpty)
+            Divider()
+            ForEach(SignOffLevel.allCases, id: \.self) { level in
+                Button("Mark as \(level.label)") { model.markSignOff(level, on: ids) }
+            }
+            Divider()
+            Button("Move \(ids.count) Items to Trash") { model.trashBinderItems(ids) }
+        } else {
+            single(item, tree)
+        }
+    }
+
+    @ViewBuilder
+    private func single(_ item: BinderItem, _ tree: BinderTree) -> some View {
         let loose = !item.isFolder && item.parentPath.isEmpty
         if !item.isFolder {
             Button("Preview") {
-                screen.selection = item.path
+                screen.select(item.path)
                 screen.preview = tree.url(item)
             }
             Button("Open") { NSWorkspace.shared.open(tree.url(item)) }
+            Divider()
+        } else {
+            Button("New Folder Inside…") { model.newBinderFolder(in: item.path) }
+            Button("New Placeholder Here…") { model.newPlaceholder(in: item.path) }
             Divider()
         }
         if !loose {
@@ -464,13 +802,15 @@ struct BinderView: View {
         if item.index != nil {
             Button("Remove Index") { model.applyBinderRenames(BinderIndexer.removeIndex(from: item.path, in: tree), actionName: "Remove Index") }
         }
+        Button("Rename…") { model.renameBinderItem(item.path) }
         if item.isFolder {
+            Divider()
+            Button("Close the Gaps in the Numbering") { model.applyBinderRenames(BinderIndexer.closeGaps(in: item.path, tree: tree), actionName: "Close Gaps") }
+                .disabled(BinderIndexer.closeGaps(in: item.path, tree: tree).isEmpty)
             Button("Index the Unindexed Files Inside") {
                 model.applyBinderRenames(BinderIndexer.indexUnindexed(under: item.path, in: tree), actionName: "Index Files")
             }
             .disabled(BinderIndexer.indexUnindexed(under: item.path, in: tree).isEmpty)
-            Button("Close the Gaps") { model.applyBinderRenames(BinderIndexer.closeGaps(in: item.path, tree: tree), actionName: "Close Gaps") }
-                .disabled(BinderIndexer.closeGaps(in: item.path, tree: tree).isEmpty)
         } else {
             // Filing a file gives it the next index of the folder it goes into.
             Menu(loose ? "File In" : "Move To") {
@@ -490,6 +830,7 @@ struct BinderView: View {
         }
         Divider()
         Button("Show in Finder") { model.reveal(tree.url(item)) }
+        Button("Move to Trash") { model.trashBinderItems([item.path]) }
     }
 }
 
@@ -528,6 +869,54 @@ private struct BinderRowDrop: DropDelegate {
         hover = nil
         perform(info.itemProviders(for: [.fileURL]), drop)
         return true
+    }
+}
+
+/// A document let go on a placeholder. It either takes the placeholder's place — its index,
+/// with the placeholder sent to the Trash — or is simply put in the folder with no index.
+struct ReplacePlaceholderView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.closeWindow) private var closeWindow
+    let source: PlaceholderArrival
+    let placeholder: String
+    @State private var replace = true
+
+    var body: some View {
+        if let tree = model.binder, let target = tree.item(placeholder) {
+            let outside: Bool = { if case .outside = source { return true }; return false }()
+            VStack(alignment: .leading, spacing: 12) {
+                Text("“\(source.name)” was let go on the placeholder for “\(target.displayTitle)”").font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("", selection: $replace) {
+                    Text("Replace the placeholder — it becomes \(target.index?.text ?? "the file here"), and the placeholder goes to the Trash").tag(true)
+                    Text(outside ? "Add it as a new file in this folder, with no index — the placeholder stays"
+                                 : "Put it in this folder with no index — the placeholder stays").tag(false)
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                Text(replace ? "Journal entries that refer to the placeholder will refer to this file instead."
+                             : "You can give it an index afterwards: select it and choose Index ▸ Index the Selected File.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                HStack {
+                    Text(outside ? "The file is \(UserDefaults.standard.bool(forKey: "binder.addCopies") ? "copied" : "moved") into the binder." : "").font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") { closeWindow() }
+                        .keyboardShortcut(.cancelAction)
+                    Button(replace ? "Replace" : "Add") {
+                        if model.arrive(source, at: placeholder, replace: replace) { closeWindow() }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(18)
+            .frame(minWidth: 520, minHeight: 280)
+        } else {
+            EmptyState(title: "That placeholder isn't in the binder any more", message: "")
+                .frame(minWidth: 520, minHeight: 280)
+        }
     }
 }
 
@@ -587,18 +976,13 @@ struct BinderMoveView: View {
     @Environment(\.closeWindow) private var closeWindow
     let path: String
     let drop: BinderDrop
-    @State private var trashPlaceholder = true
 
     var body: some View {
         if let tree = model.binder, let item = tree.item(path), let target = tree.item(drop.target) {
             let renames = BinderIndexer.move(path, drop, in: tree)
-            let replacing = drop == .onto(target.path) && !target.isFolder && target.index != nil
             VStack(alignment: .leading, spacing: 12) {
                 Text(title(item, target)).font(.headline).fixedSize(horizontal: false, vertical: true)
                 Text(explanation(item, target, tree)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if replacing && target.isPlaceholder {
-                    Toggle("Move the placeholder to the Trash — the document has arrived", isOn: $trashPlaceholder)
-                }
                 RenameList(renames: renames)
                 HStack {
                     Text("Linked files and sign-offs follow the rename. ⌘Z undoes it.").font(.callout).foregroundStyle(.secondary)
@@ -606,9 +990,7 @@ struct BinderMoveView: View {
                     Button("Cancel") { closeWindow() }
                         .keyboardShortcut(.cancelAction)
                     Button(renames.count > 1 ? "Renumber" : "Move") {
-                        let own = renames.first { $0.from == path }?.to
-                        let placeholder = replacing && target.isPlaceholder && trashPlaceholder ? renames.first { $0.from == target.path }?.to : nil
-                        if model.applyBinderMove(renames, replacedPlaceholder: placeholder, by: own) { closeWindow() }
+                        if model.applyBinderMove(renames) { closeWindow() }
                     }
                     .keyboardShortcut(.defaultAction)
                     .disabled(renames.isEmpty)
@@ -634,8 +1016,6 @@ struct BinderMoveView: View {
     private func explanation(_ item: BinderItem, _ target: BinderItem, _ tree: BinderTree) -> String {
         switch drop {
         case .onto where target.isFolder: return "It gets the folder's next index."
-        case .onto where target.index != nil && target.isPlaceholder:
-            return "It becomes \(target.index!.text), in the placeholder's place. With the box ticked, the placeholder goes to the Trash and journal entries that refer to it refer to this file instead; otherwise it stays in the folder with no index."
         case .onto where target.index != nil:
             return "It becomes \(target.index!.text). “\(target.displayTitle)” stays in the folder but is left with no index."
         case .onto: return "“\(target.displayTitle)” has no index to take or to sit beside, so the file is given the folder's next one."
@@ -688,6 +1068,8 @@ struct AddToBinderView: View {
     let urls: [URL]
     let folderPath: String
     var suggested: BinderIndex?
+    /// The suggested number is free and sits where the file was let go: start on it.
+    var preferSuggested = false
     @State private var how = "next"
     @State private var custom = ""
     @State private var loaded = false
@@ -719,7 +1101,7 @@ struct AddToBinderView: View {
                             TextField("e.g. \(next?.text ?? "2000.04")", text: $custom)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 110)
-                                .onChange(of: custom) { _, new in if !new.isEmpty { how = "custom" } }
+                                .onChange(of: custom) { _, new in if !new.isEmpty && loaded && new != suggested?.text { how = "custom" } }
                         }
                         .tag("custom")
                         Text("No index — keep the name\(files.count == 1 ? "" : "s") as \(files.count == 1 ? "it is" : "they are")").tag("none")
@@ -783,9 +1165,13 @@ struct AddToBinderView: View {
             .onAppear {
                 guard !loaded else { return }
                 loaded = true
-                if let suggested { custom = suggested.text }
-                // The next index is the default; a folder with no number has none to give.
+                // The next index is the default; a folder with no number has none to give. Let go
+                // between two files with a number free between them, that number is the default.
                 how = next == nil ? "none" : "next"
+                if let suggested {
+                    custom = suggested.text
+                    how = preferSuggested ? "custom" : how
+                }
             }
         }
     }

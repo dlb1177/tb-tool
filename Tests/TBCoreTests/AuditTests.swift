@@ -194,11 +194,11 @@ final class AuditTests: XCTestCase {
         let text = String(data: data, encoding: .utf8)!
         XCTAssertTrue(text.contains("\"sheet\": \"2026 Additions\", \"cells\": \"B4:D10\""))
         XCTAssertTrue(text.contains("{ \"path\": \"4000 Support/4000.01 Invoice.pdf\", \"note\": \"page 2\" }"))
-        let report = Reports(e).journalEntries()
-        let files = report.columns.firstIndex { $0.title.lowercased().contains("file") }
-        let column = try XCTUnwrap(files)
-        guard case .text(let shown) = report.rows[0].cells[column] else { return XCTFail() }
-        XCTAssertTrue(shown.contains("3000.02 Depreciation.xlsx ['2026 Additions'!B4:D10]"), shown)
+        // As data (the JSON export): references by file name, and no next-year column.
+        let records = Reports(e).journalEntries()
+        XCTAssertEqual(records.columns.map(\.title), ["Entry", "Type", "Date", "Description", "Trial Balance", "Account", "Account Name", "Debit", "Credit", "Memo", "References"])
+        guard case .text(let shown) = records.rows[0].cells[10] else { return XCTFail() }
+        XCTAssertEqual(shown, "3000.02 Depreciation.xlsx; 3000.02 Depreciation.xlsx; 4000.01 Invoice.pdf")
 
         // Moving the same workbook's two references doesn't fold them into one.
         var relinked = e
@@ -233,5 +233,73 @@ final class AuditTests: XCTestCase {
         func first(_ r: ReportRow) -> Money { if case .money(let v) = r.cells[2] { return v }; return .zero }
         let subs = grouped.rows.filter { $0.parentRowID == group.id }
         XCTAssertEqual(first(group), (inside + subs).map(first).sum())
+    }
+
+    func testTheJournalIsSetOutEntryByEntry() throws {
+        var e = try sample()
+        func entry(_ number: String, _ type: JEType, _ entity: String, _ description: String) -> JournalEntry {
+            var je = JournalEntry(number: number, type: type, date: "2026-12-31", description: description)
+            je.lines = [JELine(entity: entity, account: "14150", amount: Money.parse("500")!.value, memo: "Why"),
+                        JELine(entity: entity, account: "10001", amount: Money.parse("-500")!.value)]
+            je.rollForward = .reversal
+            return je
+        }
+        var first = entry("AJE-1", .adjusting, "ashford", "Accrue audit fee")
+        first.references = [FileReference(path: "3000 Standard Workpapers/3000.02 Accrual.xlsx", note: "see total", sheet: "Summary", cells: "B4"),
+                            FileReference(path: "4000 Support/4000.01 Invoice.pdf")]
+        try e.post(first)
+        try e.post(entry("AJE-2", .adjusting, "ashford", "Second"))
+        try e.post(entry("TJE-1", .taxOnly, "ashford", "Tax only"))
+        var waiting = entry("RJE-1", .reclassifying, "ashford", "Rolled forward without amounts")
+        waiting.pending = true
+        e.journalEntries.append(waiting)
+
+        let t = Reports(e).journalReport()
+        XCTAssertEqual(t.title, "Journal Entries")
+        XCTAssertEqual(t.columns.map(\.title), ["Entry", "Trial Balance", "Account", "Account Name", "Debit", "Credit", "Memo"])
+        func texts(_ row: ReportRow) -> [String] { row.cells.map { cell in
+            switch cell { case .empty: return ""; case .text(let s): return s; case .money(let m): return m.plain }
+        } }
+        // A heading for each kind there is, in order; an entry still waiting for amounts posts nothing and isn't listed.
+        XCTAssertEqual(t.rows.filter { $0.style == .section }.map { texts($0)[0] }, ["ADJUSTING JOURNAL ENTRIES", "TAX JOURNAL ENTRIES"])
+        // Each entry: its number, date and description once, above its lines.
+        let head = try XCTUnwrap(t.rows.first { $0.id == "h:\(first.id)" })
+        XCTAssertEqual(head.style, .heading)
+        XCTAssertEqual(texts(head), ["AJE-1", "12/31/2026", "Accrue audit fee"])
+        // Then what it refers to: the index and file name, never the path, the tab or the note.
+        let notes = t.rows.filter { $0.style == .note && $0.entryID == first.id }.map { texts($0)[2] }
+        XCTAssertEqual(notes, ["Ref: 3000.02 Accrual.xlsx", "Ref: 4000.01 Invoice.pdf"])
+        // Then its lines, with nothing repeated on them, and its total.
+        let lines = t.rows.filter { $0.style == .normal && $0.entryID == first.id }.map(texts)
+        XCTAssertEqual(lines, [["", "Ashford", "14150", "Storage Building - Ashford", "500.00", "", "Why"],
+                               ["", "Ashford", "10001", "Ashford Checking (1042) - 2", "", "500.00", ""]])
+        XCTAssertEqual(texts(try XCTUnwrap(t.rows.first { $0.id == "e:\(first.id)" })), ["", "", "", "Total AJE-1", "500.00", "500.00", ""])
+        // The rows of an entry are one block (kept on one page when printed), with a gap after.
+        let mine = t.rows.filter { $0.block == first.id }
+        XCTAssertEqual(mine.map(\.style), [.heading, .note, .note, .normal, .normal, .subtotal])
+        XCTAssertEqual(t.rows[t.rows.firstIndex { $0.id == "e:\(first.id)" }! + 1].style, .blank)
+        // A total for each kind, and one for everything.
+        XCTAssertEqual(texts(try XCTUnwrap(t.rows.first { $0.id == "tt:adjusting" })).suffix(4), ["Total adjusting journal entries", "1000.00", "1000.00", ""])
+        XCTAssertEqual(texts(try XCTUnwrap(t.rows.last)).suffix(4), ["Total, all journal entries", "1500.00", "1500.00", ""])
+        // Nothing about next year, and no path, anywhere in what is exported.
+        let csv = Exporter.csv(t, heading: true)
+        XCTAssertFalse(csv.lowercased().contains("revers"))
+        XCTAssertFalse(csv.contains("3000 Standard Workpapers"))
+        XCTAssertFalse(csv.contains("Summary"))
+        XCTAssertTrue(csv.contains("AJE-1,12/31/2026,Accrue audit fee\n,,Ref: 3000.02 Accrual.xlsx\n"))
+
+        // One kind on its own.
+        let tax = Reports(e).journalReport(types: [.taxOnly])
+        XCTAssertEqual(tax.title, "Tax Journal Entries")
+        XCTAssertEqual(tax.sheetName, "TJEs")
+        XCTAssertEqual(tax.rows.filter { $0.style == .heading }.count, 1)
+        XCTAssertNil(tax.rows.first { $0.id == "total" })
+        // The workbook: every entry on one sheet, then a sheet for each kind there is.
+        let sheets = XLSXWriter.sheetNames(Reports(e).workbook())
+        XCTAssertTrue(sheets.contains("Journal Entries") && sheets.contains("AJEs") && sheets.contains("TJEs"))
+        XCTAssertFalse(sheets.contains("RJEs") || sheets.contains("EJEs"))
+        XCTAssertNoThrow(Exporter.xlsx(Reports(e).workbook()))
+        // No entries at all still makes a report.
+        XCTAssertEqual(Reports(try sample()).journalReport().rows.map(\.style), [.note])
     }
 }

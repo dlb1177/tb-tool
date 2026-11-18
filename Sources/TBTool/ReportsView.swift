@@ -26,7 +26,7 @@ enum ReportKind: String, CaseIterable, Identifiable {
         case .groupingSummary: return "The consolidation rolled up to the grouping list, subgroups nested under their grouping. Double-click a grouping for its accounts."
         case .groupingDetail: return "Each grouping and subgroup opened up to the accounts inside it."
         case .entity: return "One trial balance: Unadjusted, AJE, Adjusted, RJE, Final, TJE, Tax."
-        case .journal: return "One row per journal line, with the entry's number, type, and linked files."
+        case .journal: return "Every entry set out on its own, under a heading for each kind. Click a reference to open the workpaper."
         case .data: return "One row per trial balance × account with every column. Built for pivots, charts, and handing to Claude."
         case .accounts: return "The shared chart with types and grouping assignments."
         case .signOffs: return "Every workpaper marked prepared, reviewed or second reviewed: who marked it, and when."
@@ -50,6 +50,7 @@ struct ReportsView: View {
     @AppStorage("entity.byGrouping") private var byGrouping = false
     @State private var entityID = ""
     @State private var entryFilter = "all"
+    @State private var carriedSort: NamedSort?
 
     private var kind: ReportKind { ReportKind(rawValue: kindRaw) ?? .consolidating }
 
@@ -61,6 +62,7 @@ struct ReportsView: View {
             let e = ledger.engagement
             let table = makeTable(ledger)
             let exported = model.drafts.isEmpty ? table : makeTable(saved)
+            let grouped = kind == .entity && byGrouping
             VStack(spacing: 0) {
                 PageHeader(title: "Reports & Export", subtitle: kind.blurb) {
                     Button {
@@ -71,6 +73,8 @@ struct ReportsView: View {
                     .help("Writes the full workbook (.xlsx) and the long-format data (.csv), time-stamped, into a folder you choose — the trial balance file's folder unless you pick another")
                     Button("Export Full Workbook…") { model.exportWorkbookPanel() }
                         .help("Every report as a sheet in one Excel file")
+                    Button("All Reports as PDF…") { model.exportAllAsPDF() }
+                        .help("Every report in one PDF, each starting on a new page, with numbered pages")
                 }
                 Divider()
                 HStack(spacing: 10) {
@@ -93,7 +97,10 @@ struct ReportsView: View {
                         }
                         .labelsHidden()
                         .fixedSize()
-                        Toggle("By grouping", isOn: $byGrouping)
+                        Toggle("By grouping", isOn: Binding(get: { byGrouping }, set: {
+                            carriedSort = nil
+                            byGrouping = $0
+                        }))
                             .toggleStyle(.checkbox)
                             .fixedSize()
                             .help("Lay the accounts out under their groupings and subgroups, with a total for each")
@@ -117,7 +124,8 @@ struct ReportsView: View {
                     Spacer()
                     Text("Export:").foregroundStyle(.secondary)
                     ForEach(AppModel.ExportFormat.allCases, id: \.self) { format in
-                        Button(format.label) { model.export(exported, as: format) }
+                        // The journal goes out set out entry by entry; as JSON it goes out as records.
+                        Button(format.label) { model.export(kind == .journal && format == .json ? journalData(saved) : exported, as: format) }
                     }
                     Button("Copy") { model.copyToClipboard(exported) }
                         .help("Copies the report so it pastes into a spreadsheet as cells")
@@ -126,14 +134,28 @@ struct ReportsView: View {
                 .padding(.vertical, 8)
                 Divider()
                 DraftBanner(exportNote: true)
-                GridPanel(table: table, key: "report.\(kind.rawValue)") { row in
-                    model.open(row, basis: Basis(rawValue: basisRaw) ?? .book)
+                if kind == .journal {
+                    JournalReportView(ledger: ledger, types: JEType(rawValue: entryFilter).map { [$0] })
+                } else {
+                    GridPanel(table: table, key: grouped ? "report.entity.grouped" : "report.\(kind.rawValue)", onActivate: { row in
+                        model.open(row, basis: Basis(rawValue: basisRaw) ?? .book)
+                    }, initialSort: kind == .entity && !byGrouping ? carriedSort : nil, onSort: { sort in
+                        // Sorting a trial balance laid out by grouping gives a plain list: untick the box to match.
+                        guard grouped, let sort else { return }
+                        carriedSort = NamedSort(title: ["Code": "Account", "Grouping": "Name"][sort.title] ?? sort.title, ascending: sort.ascending)
+                        byGrouping = false
+                    })
+                    .id("\(kind.rawValue).\(grouped)")
                 }
             }
             .onAppear {
                 if e.entity(entityID) == nil { entityID = e.entities.first?.id ?? "" }
             }
         }
+    }
+
+    private func journalData(_ ledger: Ledger) -> ReportTable {
+        Reports(ledger: ledger).journalEntries(types: JEType(rawValue: entryFilter).map { [$0] })
     }
 
     private func makeTable(_ ledger: Ledger) -> ReportTable {
@@ -148,7 +170,7 @@ struct ReportsView: View {
             return byGrouping ? reports.entityByGrouping(entityID: id, hideZero: hideZero, prior: priorCount, priorBasis: Basis(rawValue: priorBasis) ?? .book)
                               : reports.entityTrialBalance(entityID: id, hideZero: hideZero, prior: priorCount, priorBasis: Basis(rawValue: priorBasis) ?? .book)
         case .journal:
-            return reports.journalEntries(types: JEType(rawValue: entryFilter).map { [$0] })
+            return reports.journalReport(types: JEType(rawValue: entryFilter).map { [$0] })
         case .data: return reports.tidy(hideZero: hideZero)
         case .accounts: return reports.chartOfAccounts()
         case .signOffs: return reports.signOffs()

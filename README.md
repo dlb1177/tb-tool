@@ -33,18 +33,22 @@ the client's folder**. No server, no account, no database.
 - **Carries prior years** as PP1, PP2… columns, and **rolls forward** to next year, with each
   entry marked to carry over with amounts, without amounts, as a reversal, or not at all.
 - **Manages the binder**: the client's folder for the year, with numbered folders and indexed
-  workpapers. Drop files in from Finder and they take the next index; drag a file to move or
-  renumber it, with every rename shown for confirmation first; press Space to preview. No two
-  items ever share an index, loose and unindexed files are flagged, and a new binder starts
-  with your standard folders.
+  workpapers, without going to Finder. Drop files in; drag a file to move or renumber it (onto
+  a free number it just lands, otherwise every rename is shown for confirmation first); select
+  several to index, open or delete; make folders, subfolders and placeholders; press Space to
+  preview. See it as folders or as one flat, sortable list, and search or filter by sign-off.
+  No two items ever share an index, and a new binder starts with your standard folders.
 - **Rolls the binder forward** with the trial balance, copying each file, leaving a
   placeholder, or leaving it behind.
 - **Keeps a paper trail.** Workpapers are signed off as prepared, reviewed and second reviewed,
   each mark recording who, on which Mac, when, and a fingerprint of the file, so a workpaper
   changed afterwards shows. Every change to the file is written to a change log that makes
   later tampering evident.
-- **Exports** to Excel (a formatted workbook with binder headings), CSV and JSON, and reads and
-  writes a plain, documented file format that scripts and AI assistants can work with directly.
+- **Exports** to Excel (a formatted workbook with binder headings), PDF (numbered pages, column
+  titles on every page, no journal entry split across pages), CSV and JSON. The journal goes
+  out the way a client expects to read it: each entry on its own, under a heading for its kind.
+- Reads and writes a plain, documented file format that scripts and AI assistants can work
+  with directly. Light and dark appearance, or automatic.
 
 ## The manual
 
@@ -61,6 +65,7 @@ everything the tool does.
 | ![Journal entry](docs/images/entry-editor.png) **A journal entry** in its own window, with its references | ![Import](docs/images/import.png) **Importing**: the predicted layout, shown for confirmation |
 | ![Roll forward](docs/images/roll-forward.png) **Rolling forward** the trial balance and the binder | ![The binder](docs/images/binder.png) **The binder**, with index numbers, sign-offs and alerts |
 | ![Change log](docs/images/change-log.png) **The change log**: what, who, on which Mac, when | ![By grouping](docs/images/trial-balance-by-grouping.png) **A trial balance by grouping**, at the click of a button |
+| ![Journal PDF](docs/images/journal-pdf.png) **The journal as a PDF**: each entry on its own, never split across pages | ![All files](docs/images/binder-all-files.png) **Every file in the binder** in one sortable list, with its sign-offs |
 
 ## Getting it
 

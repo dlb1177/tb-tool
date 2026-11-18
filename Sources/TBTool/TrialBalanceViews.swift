@@ -242,6 +242,9 @@ struct EntityView: View {
     @AppStorage("entity.priorBasis") private var priorBasis = Basis.book.rawValue
     /// Show the accounts under their groupings, with a total for each, as the grouping detail report does.
     @AppStorage("entity.byGrouping") private var byGrouping = false
+    /// A sort clicked while laid out by grouping: sorting gives a plain list, so the layout goes
+    /// back to the plain one and takes the sort with it.
+    @State private var carriedSort: NamedSort?
     let entityID: String
 
     var body: some View {
@@ -262,7 +265,10 @@ struct EntityView: View {
                         .foregroundStyle(.orange)
                         .help("Every trial balance needs the activity number it is imported under in the tax software. Click to set it.")
                     }
-                    Toggle(isOn: $byGrouping) {
+                    Toggle(isOn: Binding(get: { byGrouping }, set: {
+                        carriedSort = nil
+                        byGrouping = $0
+                    })) {
                         Label("By Grouping", systemImage: "list.bullet.indent")
                     }
                     .toggleStyle(.button)
@@ -315,9 +321,13 @@ struct EntityView: View {
                     }
                     .padding(.top, 80)
                 } else {
-                    GridPanel(table: table, key: byGrouping ? "entity.grouped" : "entity") { row in
+                    GridPanel(table: table, key: byGrouping ? "entity.grouped" : "entity", onActivate: { row in
                         if let id = row.accountID { model.showActivity(accountID: id, entityID: entityID) }
-                    }
+                    }, initialSort: byGrouping ? nil : carriedSort, onSort: { sort in
+                        guard byGrouping, let sort else { return }
+                        carriedSort = NamedSort(title: ["Code": "Account", "Grouping": "Name"][sort.title] ?? sort.title, ascending: sort.ascending)
+                        byGrouping = false
+                    })
                     .id(byGrouping)
                     Divider()
                     checks(ledger)
