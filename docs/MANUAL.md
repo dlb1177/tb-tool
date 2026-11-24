@@ -348,11 +348,37 @@ step.
 
 The same review appears when importing a prior year's balances.
 
+### Importing into a trial balance you already have: replace, or add
+
+When **Import into** names a trial balance that already exists, **Its balances** offers two
+things:
+
+![Adding a file to a trial balance](images/import-add.png)
+
+- **Replace them.** The file's balances take the place of everything the trial balance had.
+  This is a re-import.
+- **Add to them.** The file's accounts and balances **join** what is there. Use this when more
+  accounts arrive after the first import — a supplementary trial balance, a subledger, a late
+  adjustment from the client — and you want them added rather than starting again.
+  - Accounts the trial balance doesn't have yet come in with their balances. New accounts join
+    the shared chart as usual.
+  - For **an account it already has**, choose: **Add the amounts together** (the default), or
+    **Use the file's amount** (that account's balance becomes the file's).
+  - Every balance the file doesn't mention stays as it is. Journal entries are not touched.
+
+The line under the controls says what will happen, counted from the rows that are ticked:
+how many accounts are new, and how many it already has. The trial balance's source then reads
+`first file + second file`. As with any change, ⌘Z takes an addition back.
+
+To go straight there: a trial balance's **Balances ▸ Add Accounts and Balances from File…**,
+or right-click it in the sidebar. To add or change a few balances without a file, use
+Balances ▸ Edit Unadjusted Balances… ([section 6](#6-the-trial-balance-screens)).
+
 ### Other ways to create a trial balance
 
 - **New Blank Trial Balance…** creates an empty one and opens the balance editor to key it in.
 - **Replace Balances from File…** (right-click a trial balance, or its Balances menu) re-imports
-  one.
+  one. **Add Accounts and Balances from File…** adds to one, as above.
 
 ## 6. The trial balance screens
 
@@ -389,7 +415,8 @@ Select a trial balance in the sidebar. The columns are Account, Name, Grp (group
 - **Prior Periods**: how many, and whether they are shown on the book or the tax basis.
 - **Hide zero rows**.
 - **New Entry**: an adjusting, reclassifying or tax-only entry for this trial balance.
-- **Balances**: Edit Unadjusted Balances…, Replace Unadjusted Balances from File…, and for each
+- **Balances**: Edit Unadjusted Balances…, Add Accounts and Balances from File…, Replace
+  Unadjusted Balances from File…, and for each
   of PP1 to PP4: Import from File…, Enter or Edit Balances…, Remove.
 
 Under the grid: whether the imported balances and the adjusted columns are in balance, the
@@ -404,8 +431,8 @@ entries posted only to it. It is refused while an eliminating entry still refers
 ![One trial balance laid out by grouping](images/trial-balance-by-grouping.png)
 
 **By Grouping** lays the trial balance out the way the Grouping Detail report does: each
-section, each grouping with its total in bold, subgroups nested under their grouping, and the
-accounts inside each. Accounts with no grouping come last, under *Ungrouped accounts*. The
+section on a blue band, each grouping with its total in bold on a lighter band, subgroups
+nested under their grouping a shade lighter still, and the accounts inside each. Accounts with no grouping come last, under *Ungrouped accounts*. The
 amount columns, the total and net income are exactly those of the plain list. Double-click an
 account for its activity, or a grouping for its accounts across every trial balance. The
 choice is remembered, and it has its own column layout.
@@ -472,6 +499,14 @@ Every trial balance, consolidation, report, activity and grouping grid behaves t
   under their columns as you scroll sideways.
 - **Filter box**: type any words; rows containing all of them (in any column) remain, and a
   total of the rows shown appears.
+- **Leaving a search box.** Every search and filter box in the app works the same way: press
+  **Esc** or Return, or **click anywhere else**, and you are out of the box, with the keyboard
+  back on the list (arrows move, Space previews, ⌘C copies). **What you typed stays**, so the
+  list stays narrowed while you work in it. The ✕ in the box clears it.
+- **Shaded bands**, as in the exports: a section sits on a blue band, a grouping that heads
+  its accounts on a lighter one, its subgroups lighter still, and the totals on grey. You see
+  them wherever groupings are shown — a trial balance by grouping, the consolidation by
+  grouping, the grouping reports, a grouping's accounts — in light and dark appearance.
 - **Filters** button: build rules.
 
   ![The filter editor](images/filters.png)
@@ -542,7 +577,9 @@ or ⌘J (adjusting), ⇧⌘J (reclassifying), ⌥⌘J (tax-only), ⌃⌘J (elimi
 - **Next year**: what a roll forward does with this entry
   ([section 12](#12-prior-years-and-rolling-forward)).
 - **Lines**: account, debit or credit, memo. **Add Line** (⌘L) adds a line that starts with
-  whatever amount would balance the entry. **New Account…** adds an account to the chart.
+  whatever amount would balance the entry, **and puts the cursor in the new line's account
+  field**, ready to type. Tabbing from the last memo lands on Add Line, and **Return presses
+  it**: Tab, Return, type the account, and so on down the entry without the mouse. **New Account…** adds an account to the chart.
 - **References**: the workpapers that support the entry, picked from the binder.
 - The footer shows debits, credits and the difference, and lists anything stopping the entry
   from being posted.
@@ -708,12 +745,30 @@ the number (1 asset, 2 liability, 3 equity, 4 revenue, 5 to 9 expense), otherwis
 name. It is used until the account is grouped, which is one more reason the ungrouped alert is
 there.
 
+**Changing an account's number or name.** Double-click an account (or select it and click
+**Edit…**, or right-click ▸ Edit Number and Name…).
+
+![Editing an account](images/edit-account.png)
+
+- **The name** changes everywhere the account is shown, in every trial balance.
+- **The number** is what balances and journal lines know the account by, so when you change it
+  everything that refers to the account is moved to the new number: this year's balances in
+  every trial balance, prior years' balances, and every journal entry line. Nothing is lost
+  and nothing has to be re-entered; the grouping and type stay as they are. The window says how
+  much will move before you save.
+- A number that another account already has is refused: two accounts cannot share one. (To
+  combine two accounts, move the balance with a reclassifying entry or by editing balances.)
+- An account kept by name can be given a number, and a number can be removed.
+- The change log records it as one line, *Account number 10001 → 10900*. ⌘Z changes it back.
+
 **New Account…** asks for a number, a name and a grouping. The type shown is the grouping's.
 
 ![Adding an account](images/new-account.png)
 
 **Deleting** is allowed only for an account with no balances (this year or a prior year) and no
 journal lines.
+
+**Right-click an account** for Edit Number and Name… and Show Activity.
 
 **The Chart menu:** New Account…, Import Chart of Accounts…, Export Chart of Accounts (JSON or
 CSV).
@@ -1696,7 +1751,7 @@ inside the app bundle at `TB Tool.app/Contents/MacOS/tbcli`, and is built by `sw
 
 ```
 tbcli new <file.json> [--name "Client"] [--period YYYY-MM-DD]
-tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names]
+tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names] [--append | --append-replace]
 tbcli map <file.json> <mapping.csv>
 tbcli coa-export <file.json> <out.json|out.csv>
 tbcli coa-import <file.json> <chart.json|csv|xlsx|other TB.json> [--overwrite] [--add-missing] [--no-types]
@@ -1714,7 +1769,7 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | Command | What it does |
 |---|---|
 | `new` | Creates an empty file with the built-in grouping list. |
-| `import` | Imports one trial balance, detecting the layout (or using a saved one). The trial balance is named with `--entity`, or from the file name; if one by that name exists, its balances are replaced. With `--prior-year`, the file is that year's closing balances. An account the file names differently from the chart keeps the chart's name, and each is reported; with `--use-file-names` the chart takes the file's names instead. Prints what was read and what was skipped. |
+| `import` | Imports one trial balance, detecting the layout (or using a saved one). The trial balance is named with `--entity`, or from the file name; if one by that name exists, its balances are replaced. With `--prior-year`, the file is that year's closing balances. An account the file names differently from the chart keeps the chart's name, and each is reported; with `--use-file-names` the chart takes the file's names instead. With `--append` the file is added to the trial balance instead of replacing its balances (an account both have gets the two amounts added; with `--append-replace`, the file's amount). Prints what was read and what was skipped. |
 | `map` | Assigns groupings from a two-column CSV: `account,grouping`. The grouping may be an id, a code, or "code name". An empty grouping clears the assignment. |
 | `coa-export` / `coa-import` | The chart of accounts with types and groupings. Import fills in ungrouped accounts unless `--overwrite`; `--add-missing` adds accounts; `--no-types` leaves types alone. |
 | `groupings-export` / `groupings-import` | The grouping list. Import replaces the list unless `--merge`. |
@@ -1792,6 +1847,11 @@ name, login and Mac of whoever ran it and what the command changed.
 | Fix Broken File Links… | |
 | Quick Export… | ⌘E |
 | Export Workbook… | ⇧⌘E |
+
+**Everywhere:** Tab moves between fields and buttons (with *Keyboard navigation* turned on in
+System Settings ▸ Keyboard); **Return presses the button the keyboard is on**, as Space does.
+With the keyboard in a field, Return still does what it always did (Post Entry, Save, Import).
+**Esc**, Return or a click elsewhere leaves a search box without clearing it.
 
 **In a journal entry window:** Add Line ⌘L; Post Entry or Save Changes Return; Post & New ⇧⌘↩;
 Cancel Esc. In an account field: ↑ ↓ to move through matches, Return or Tab to pick, Esc to
@@ -1911,6 +1971,12 @@ or the Accounts screen's Chart menu.
 
 **A linked file shows as missing.** Fix Links… on the Journal Entries screen. Or open the
 entry, remove the reference, and pick the file again from the binder's list.
+
+**Tab skips the buttons.** macOS only tabs to buttons when *Keyboard navigation* is on: System
+Settings ▸ Keyboard. With it on, Tab reaches Add Line and the rest, and Return presses them.
+
+**I imported a second file and the first one's balances are gone.** The import replaced them.
+Press ⌘Z, then import again with **Its balances ▸ Add to them**.
 
 **I renamed a file and its extension is still there.** That is deliberate: renaming changes
 only the name, so a file can't be left without its type.

@@ -212,6 +212,7 @@ struct Sidebar: View {
                                 Divider()
                                 Button("Details…") { model.showEntityDetails(entity.id) }
                                 Button("Edit Unadjusted Balances…") { model.showBalanceEditor(entityID: entity.id, priorYear: nil) }
+                                Button("Add Accounts and Balances from File…") { model.importPanel(replacing: entity.id, appending: true) }
                                 Button("Replace Balances from File…") { model.importPanel(replacing: entity.id) }
                                 Divider()
                                 Button("Delete…", role: .destructive) { deleting = entity }

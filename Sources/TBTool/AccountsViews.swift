@@ -154,14 +154,8 @@ struct AccountsView: View {
 
     private func filterBar(_ e: Engagement) -> some View {
         HStack(spacing: 10) {
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search number, name, grouping…", text: $search).textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
-            .frame(minWidth: 140, idealWidth: 220, maxWidth: 240)
+            SearchBox(prompt: "Search number, name, grouping…", text: $search)
+                .frame(minWidth: 140, idealWidth: 220, maxWidth: 240)
             Picker("", selection: $status) {
                 Text("All").tag("all")
                 Text("Ungrouped").tag("ungrouped")
@@ -248,6 +242,9 @@ struct AccountsView: View {
                     showPicker = false
                 }
             }
+            Button("Edit…") { if let id = selection.first { model.showEditAccount(id) } }
+                .disabled(selection.count != 1)
+                .help("Change the selected account's number or name. Or double-click it.")
             Button("Clear Grouping") {
                 let ids = picked
                 model.mutate("Clear Grouping") { $0.setGrouping(nil, forAccounts: ids) }
@@ -317,6 +314,15 @@ struct AccountsView: View {
             TableColumn("Used By", value: \.usedBy) { r in Text(r.usedBy).foregroundStyle(.secondary) }
                 .width(min: 36, ideal: 240)
                 .customizationID("used-by")
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if ids.count == 1, let id = ids.first {
+                Button("Edit Number and Name…") { model.showEditAccount(id) }
+                Button("Show Activity") { model.showActivity(accountID: id, entityID: nil) }
+            }
+        } primaryAction: { ids in
+            // Double-click an account to change its number or name.
+            if ids.count == 1, let id = ids.first { model.showEditAccount(id) }
         }
         .background(TableColumnFitter(key: "accounts", contents: [
             "Account": shown.map(\.number), "Name": shown.map(\.name), "Type": shown.map(\.typeLabel),

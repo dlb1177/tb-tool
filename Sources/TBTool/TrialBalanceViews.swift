@@ -287,6 +287,7 @@ struct EntityView: View {
                         Button("Name and Activity Number…") { model.showEntityDetails(entityID) }
                         Divider()
                         Button("Edit Unadjusted Balances…") { model.showBalanceEditor(entityID: entityID, priorYear: nil) }
+                        Button("Add Accounts and Balances from File…") { model.importPanel(replacing: entityID, appending: true) }
                         Button("Replace Unadjusted Balances from File…") { model.importPanel(replacing: entityID) }
                         if let year = e.currentYear {
                             Divider()

@@ -621,6 +621,142 @@ enum Snapshotter {
             steps.append(("binder-log-2", { model.selection = .changeLog }))
         }
 
+        // With --tb-keys-demo (use a scratch copy): leaving a search box with Esc and with a click,
+        // Return on the button the keyboard is on, adding a file to a trial balance, and
+        // renumbering an account.
+        if args.contains("--tb-keys-demo"), let first, first.balances.count >= 2 {
+            func main() -> NSWindow? { NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false } }
+            func click(_ point: NSPoint, in window: NSWindow) {
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let e = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.postEvent(e, atStart: false) }
+                }
+            }
+            func press(_ code: UInt16, _ characters: String, in window: NSWindow) {
+                if let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                            context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) { NSApp.postEvent(e, atStart: false) }
+            }
+            func say(_ text: String) { FileHandle.standardError.write(Data("  \(text)\n".utf8)) }
+            func typing(_ window: NSWindow?) -> String { window?.firstResponder is NSText ? "a text field" : "the window (not a text field)" }
+            func searchField() -> NSTextField? {
+                findAll(NSTextField.self, in: main()?.contentView).first { ($0.placeholderString ?? "").hasPrefix("Search files") }
+            }
+            steps.append(("search-typing", {
+                Windows.shared.closeAll()
+                UserDefaults.standard.set(false, forKey: "binder.flat")
+                model.selection = .binder
+                main()?.makeKeyAndOrderFront(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    guard let window = main(), let field = searchField() else { return say("no search field found") }
+                    click(field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil), in: window)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        say("after clicking the search box, the keyboard is in: \(typing(window))")
+                        BinderScreen.current?.query = "trial"
+                    }
+                }
+            }))
+            steps.append(("search-escaped", {
+                guard let window = main() else { return }
+                press(53, "\u{1B}", in: window)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    say("after Esc, the keyboard is in: \(typing(window)); the search still reads “\(BinderScreen.current?.query ?? "")”")
+                }
+            }))
+            steps.append(("search-clicked-off", {
+                guard let window = main(), let field = searchField() else { return }
+                click(field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil), in: window)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    let was = typing(window)
+                    guard let screen = BinderScreen.current, let content = window.contentView, let frame = screen.rowFrames.first(where: { $0.key.hasSuffix("Trial Balance.csv") })?.value else { return say("no row to click") }
+                    var p = NSPoint(x: frame.minX + 260, y: frame.midY)
+                    if !content.isFlipped { p.y = content.bounds.height - p.y }
+                    click(content.convert(p, to: nil), in: window)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        say("clicked the search box (keyboard in \(was)), then a row: keyboard in \(typing(window)); selected \(screen.selection.map { ($0 as NSString).lastPathComponent }); search still “\(screen.query)”")
+                    }
+                }
+            }))
+            steps.append(("return-on-button", {
+                BinderScreen.current?.query = ""
+                Windows.shared.closeAll()
+                model.selection = .entity(first.id)
+                model.newEntry(.adjusting, entityID: first.id)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    guard let window = NSApp.windows.first(where: { $0.title == "New Journal Entry" }) else { return say("no entry window") }
+                    func accountFields() -> [SearchTextField] { findAll(SearchTextField.self, in: window.contentView).filter { ($0.placeholderString ?? "").hasPrefix("Type an account") } }
+                    let before = accountFields().count
+                    if args.contains("--tb-probe") {
+                        // What the keyboard lands on as Tab is pressed through the window.
+                        say("full keyboard access: \(NSApp.isFullKeyboardAccessEnabled)")
+                        window.makeKeyAndOrderFront(nil)
+                        if let memo = findAll(NSTextField.self, in: window.contentView).last(where: { $0.isEditable }) { window.makeFirstResponder(memo) }
+                        var last = ""
+                        func hop(_ n: Int) {
+                            guard n < 30 else { return }
+                            press(48, "\t", in: window)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                                let r = window.firstResponder
+                                let view = r as? NSView
+                                let field = ((r as? NSTextView)?.delegate as? NSTextField)?.placeholderString ?? ""
+                                let what = "\(r.map { String(describing: type(of: $0)) } ?? "nil") \(field) \((r as? NSButton)?.title ?? "") super \(view?.superview.map { String(describing: type(of: $0)) } ?? "")"
+                                if what != last || !(r is NSTextView) { say("tab \(n): \(what)") }
+                                last = what
+                                hop(n + 1)
+                            }
+                        }
+                        hop(0)
+                        return
+                    }
+                    // Tab from the last line's memo lands on Add Line; Return then presses it.
+                    window.makeKeyAndOrderFront(nil)
+                    guard let memo = findAll(NSTextField.self, in: window.contentView).last(where: { $0.isEditable && !($0 is SearchTextField) }) else { return say("no memo field") }
+                    window.makeFirstResponder(memo)
+                    press(48, "\t", in: window)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        say("after Tab the keyboard is on: \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nothing")")
+                        press(36, "\r", in: window)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                            let fields = accountFields()
+                            let editing = (window.firstResponder as? NSTextView)?.delegate as? NSTextField
+                            say("Return: \(before) lines before, \(fields.count) after; the cursor is in the new line's account field: \(editing != nil && editing === fields.last)")
+                        }
+                    }
+                }
+            }))
+            if let url = files("--tb-import").first {
+                steps.append(("import-add", {
+                    Windows.shared.closeAll()
+                    model.queueImports([url], replacing: first.id, appending: true)
+                }))
+                steps.append(("import-added", {
+                    guard let request = model.importQueue.first, let e = model.engagement else { return }
+                    let guess = TBImporter.bestGuess(sheets: request.sheets, profiles: model.importProfiles, knownTypes: e.accountTypes)
+                    let p = TBImporter.evaluate(request.sheets[guess.sheetIndex], guess.mapping, sourceName: request.sourceName, knownTypes: e.accountTypes)
+                    let had = e.entity(first.id)?.balances.count ?? 0
+                    model.commitImport(request, tb: p.tb, mapping: guess.mapping, header: nil, target: first.id, newName: "", rememberLayout: false, mode: .append(.add))
+                    model.alert = nil
+                    say("added \(url.lastPathComponent) to \(first.name): \(had) balances before, \(model.engagement?.entity(first.id)?.balances.count ?? 0) after — \(model.status)")
+                    model.undoManager?.undo()
+                    say("after undo: \(model.engagement?.entity(first.id)?.balances.count ?? 0) balances")
+                }))
+            }
+            let account = first.balances[0].account
+            steps.append(("edit-account", {
+                model.cancelAllImports()
+                Windows.shared.closeAll()
+                model.selection = .accounts
+                model.showEditAccount(account)
+            }))
+            steps.append(("account-changed", {
+                Windows.shared.closeAll()
+                let before = model.ledger?.value(.book, entity: first.id, account: account)
+                model.changeAccount(account, number: "10900", name: "Ashford Operating Account")
+                let after = model.ledger?.value(.book, entity: first.id, account: "10900")
+                say("account \(account) renumbered 10900: balance \(before?.formatted ?? "?") → \(after?.formatted ?? "?"); old number still there: \(model.engagement?.account(account) != nil); data check: \(model.issues.count) issues; log: \(model.engagement?.auditLog.last?.details ?? [])")
+                model.selection = .entity(first.id)
+            }))
+        }
+
         // --tb-only a,b,c: just these steps, by name.
         if let only = files("--tb-only").first?.lastPathComponent.split(separator: ",").map(String.init) {
             steps = steps.filter { only.contains($0.0) }

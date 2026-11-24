@@ -67,23 +67,8 @@ struct GridPanel: View {
         let visible = t.rows.filter { $0.style == .normal }.count
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    Image(systemName: "line.3.horizontal.decrease.circle").foregroundStyle(.secondary)
-                    TextField("Filter rows — account, name, grouping, amount…", text: $query)
-                        .textFieldStyle(.plain)
-                    if !query.isEmpty {
-                        Button {
-                            query = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
-                .frame(maxWidth: 320)
+                SearchBox(prompt: "Filter rows — account, name, grouping, amount…", text: $query, icon: "line.3.horizontal.decrease.circle")
+                    .frame(maxWidth: 320)
                 FilterButton(filter: $filters, columns: filterColumns, storageKey: key)
                 if let sort, sort.column < table.columns.count {
                     Button {
@@ -490,6 +475,7 @@ struct DataGrid: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
             let v = GridRowView()
             v.style = row < rows.count ? rows[row].style : .normal
+            v.band = row < rows.count ? ReportBand(rows[row]) : .none
             return v
         }
 
@@ -907,9 +893,35 @@ final class ActionItem: NSMenuItem {
 
 final class GridRowView: NSTableRowView {
     var style: ReportRow.Style = .normal
+    /// The shaded band the row sits on, the same as in the Excel and PDF exports: a section, a
+    /// grouping that heads its accounts, a subgroup. The colours follow light and dark mode.
+    var band = ReportBand.none
+
+    static func color(_ band: ReportBand) -> NSColor? {
+        switch band {
+        case .section: return NSColor.systemBlue.withAlphaComponent(0.24)
+        case .group: return NSColor.systemBlue.withAlphaComponent(0.12)
+        case .subgroup: return NSColor.systemBlue.withAlphaComponent(0.055)
+        case .entry: return NSColor.labelColor.withAlphaComponent(0.07)
+        case .total: return NSColor.labelColor.withAlphaComponent(0.10)
+        case .none, .columns: return nil
+        }
+    }
 
     override func drawBackground(in dirtyRect: NSRect) {
         super.drawBackground(in: dirtyRect)
+        if let color = GridRowView.color(band) {
+            // Over the window's own colour, so the tint is the same on striped and plain rows.
+            NSColor.textBackgroundColor.setFill()
+            bounds.fill()
+            color.setFill()
+            bounds.fill(using: .sourceOver)
+            if band == .total {
+                NSColor.labelColor.withAlphaComponent(0.45).setFill()
+                NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+            }
+            return
+        }
         guard style == .total || style == .subtotal else { return }
         NSColor.labelColor.withAlphaComponent(0.05).setFill()
         bounds.fill()

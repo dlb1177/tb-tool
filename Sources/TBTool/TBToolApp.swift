@@ -126,6 +126,8 @@ enum AppearanceChoice: String, CaseIterable {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppearanceChoice.apply()
+        SearchFocus.install()
+        ReturnPressesFocusedButton.install()
         AppModel.shared.startup()
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--tb-snapshot"), i + 1 < args.count {

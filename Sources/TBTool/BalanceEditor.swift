@@ -88,14 +88,8 @@ struct BalanceEditor: View {
             .padding(16)
             Divider()
             HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Find an account", text: $search).textFieldStyle(.plain)
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
-                .frame(minWidth: 120, idealWidth: 180, maxWidth: 200)
+                SearchBox(prompt: "Find an account", text: $search)
+                    .frame(minWidth: 120, idealWidth: 180, maxWidth: 200)
                 Toggle("All chart accounts", isOn: $showAll)
                     .fixedSize()
                     .help("List every account in the chart, not only the ones this trial balance has a balance for")

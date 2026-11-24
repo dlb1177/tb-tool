@@ -64,9 +64,8 @@ struct JournalListView: View {
             let entries = sortOrder.isEmpty ? all : all.sorted(using: sortOrder)
             VStack(spacing: 0) {
                 PageHeader(title: "Journal Entries", subtitle: summary(e)) {
-                    TextField("Search", text: $search)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 170)
+                    SearchBox(prompt: "Search", text: $search)
+                        .frame(width: 190)
                     FilterButton(filter: $rules, columns: JournalRow.filterColumns, storageKey: "journal")
                     Picker("Show", selection: $filter) {
                         Text("All Types").tag("all")
@@ -248,6 +247,8 @@ struct JournalEditor: View {
     @State private var references: [FileReference]
     @State private var rollForward: RollForward
     @State private var baseline: JournalEntry?
+    /// The line whose account field should take the cursor: the one just added.
+    @State private var focusLine: UUID?
     @State private var confirmDelete = false
     /// Set while the type picker is being put back after a change that isn't allowed.
     @State private var revertingType = false
@@ -504,7 +505,8 @@ struct JournalEditor: View {
                         .labelsHidden()
                         .frame(width: 160)
                     }
-                    AccountSearchField(accounts: engagement.sortedAccounts, accountID: line.accountID)
+                    AccountSearchField(accounts: engagement.sortedAccounts, accountID: line.accountID,
+                                       takeFocus: focusLine == draft.id, focusTaken: { focusLine = nil })
                         .frame(maxWidth: .infinity)
                     amountField(line.debit, clears: line.credit)
                     amountField(line.credit, clears: line.debit)
@@ -564,6 +566,8 @@ struct JournalEditor: View {
         if imbalance.cents > 0 { line.credit = imbalance.plain }
         if imbalance.cents < 0 { line.debit = (-imbalance).plain }
         lines.append(line)
+        // Straight into the new line, ready for its account to be typed.
+        focusLine = line.id
     }
 
     // MARK: References
@@ -776,6 +780,66 @@ private struct LabeledField<Content: View>: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             content()
+        }
+    }
+}
+
+// MARK: - Editing an account
+
+/// Changes an account's number, its name, or both. Everything that refers to the account —
+/// balances, prior years, journal lines, in every trial balance — follows a new number.
+struct EditAccountSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.closeWindow) private var dismiss
+    let accountID: String
+    @State private var number = ""
+    @State private var name = ""
+    @State private var loaded = false
+
+    var body: some View {
+        let e = model.engagement ?? Engagement(name: "", periodEnd: "")
+        let account = e.account(accountID)
+        let newID = Account(number: number.trimmingCharacters(in: .whitespaces), name: name.trimmingCharacters(in: .whitespaces)).id
+        let clash = newID != accountID ? e.account(newID) : nil
+        let usedBy = e.entities.filter { ent in ent.balances.contains { $0.account == accountID } || ent.priorPeriods.contains { $0.balances.contains { $0.account == accountID } } }.map(\.name)
+        let lines = e.journalEntries.reduce(0) { $0 + $1.lines.filter { $0.account == accountID }.count }
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Edit Account").font(.headline)
+            Form {
+                TextField("Number", text: $number, prompt: Text("None — kept by name"))
+                TextField("Name", text: $name)
+                LabeledContent("Grouping") { Text(e.groupingLabel(account?.grouping).isEmpty ? "Not grouped" : e.groupingLabel(account?.grouping)).foregroundStyle(.secondary) }
+            }
+            if let clash {
+                Label("\(newID) is already “\(clash.name)”. Two accounts can't share a number.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+            }
+            Text(newID != accountID && clash == nil
+                 ? "Changing the number moves everything that refers to this account to the new number: its balances\(usedBy.isEmpty ? "" : " in \(usedBy.joined(separator: ", "))"), prior years, and \(lines) journal line\(lines == 1 ? "" : "s"). Nothing is lost, and ⌘Z changes it back."
+                 : "The chart is shared, so the change shows in every trial balance. The grouping and the account type are not changed here.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    if model.changeAccount(accountID, number: number, name: name) { dismiss() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || clash != nil
+                          || (number.trimmingCharacters(in: .whitespaces) == account?.number && name.trimmingCharacters(in: .whitespaces) == account?.name))
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear {
+            guard !loaded, let account else { return }
+            loaded = true
+            number = account.number
+            name = account.name
         }
     }
 }

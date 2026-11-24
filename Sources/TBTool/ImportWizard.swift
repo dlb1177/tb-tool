@@ -33,6 +33,12 @@ struct ImportWizard: View {
     /// second step, where each difference is decided.
     @State private var conflicts: [AccountNameConflict]?
     @State private var resolutions: [String: AccountNameResolution] = [:]
+    /// Into a trial balance that has balances: "replace" them, or "add" the file to them — and
+    /// then, for an account both have, whether its amounts add up or the file's stands.
+    @State private var how: String
+    @State private var overlap = "add"
+
+    private var mode: ImportMode { how == "add" ? .append(overlap == "add" ? .add : .replace) : .replace }
 
     private static let newTarget = "__new__"
 
@@ -46,6 +52,7 @@ struct ImportWizard: View {
         _target = State(initialValue: existing ?? Self.newTarget)
         _newName = State(initialValue: request.suggestedName)
         _period = State(initialValue: request.priorYear ?? 0)
+        _how = State(initialValue: request.appending ? "add" : "replace")
     }
 
     private var engagement: Engagement { model.engagement ?? Engagement(name: "", periodEnd: "") }
@@ -107,7 +114,18 @@ struct ImportWizard: View {
         let name = newName.trimmingCharacters(in: .whitespaces)
         model.commitImport(request, tb: tb, mapping: mapping, header: mapping.headerRow.map { sheet.rows[$0] },
                            target: target == Self.newTarget ? nil : target, newName: name, rememberLayout: remember,
-                           priorYear: period == 0 ? nil : period, resolutions: conflicts == nil ? [:] : resolutions)
+                           priorYear: period == 0 ? nil : period, resolutions: conflicts == nil ? [:] : resolutions, mode: mode)
+    }
+
+    /// What adding this file to the chosen trial balance will do, counted from the rows that are ticked.
+    private var addingNote: String {
+        let name = engagement.entity(target)?.name ?? ""
+        let met = engagement.appendPreview(preview.tb, into: target)
+        var text = "The file is added to “\(name)”: \(met.new) account\(met.new == 1 ? "" : "s") it doesn't have yet come in with their balances."
+        if met.already > 0 {
+            text += " \(met.already) account\(met.already == 1 ? "" : "s") it already has: " + (overlap == "add" ? "the file's amount is added to each balance." : "each balance becomes the file's amount.")
+        }
+        return text + " Every other balance, and the journal entries, stay as they are."
     }
 
     // MARK: Header
@@ -167,11 +185,33 @@ struct ImportWizard: View {
                     Picker("", selection: $target) {
                         Text("New trial balance").tag(Self.newTarget)
                         if !engagement.entities.isEmpty { Divider() }
-                        ForEach(engagement.entities) { Text(period == 0 ? "Replace “\($0.name)”" : $0.name).tag($0.id) }
+                        ForEach(engagement.entities) { Text($0.name).tag($0.id) }
                     }
                     .labelsHidden()
                     .fixedSize()
                     .disabled(request.replacing != nil)
+                }
+                if target != Self.newTarget && period == 0 {
+                    field("Its balances") {
+                        Picker("", selection: $how) {
+                            Text("Replace them").tag("replace")
+                            Text("Add to them").tag("add")
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                        .help("Replace: the file's balances take the place of everything this trial balance has. Add: the file's accounts and balances join what is there.")
+                    }
+                    if how == "add" {
+                        field("An account it already has") {
+                            Picker("", selection: $overlap) {
+                                Text("Add the amounts together").tag("add")
+                                Text("Use the file's amount").tag("replace")
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                        }
+                    }
                 }
                 if target == Self.newTarget {
                     field("Name") {
@@ -212,6 +252,8 @@ struct ImportWizard: View {
                  ? "These come in as \(engagement.priorLabel(period)) closing balances\(target == Self.newTarget ? "" : " for “\(engagement.entity(target)?.name ?? "")”"), shown beside this year's. This year's balances and journal entries are not changed."
                  : target == Self.newTarget
                  ? "Check the role above each column and the rows that come in (✓). Totals, headings and blank lines are left out automatically, but any row except the header can be checked or unchecked by hand. Right-click a row number to make it the header. Accounts with no number are kept by name."
+                 : how == "add"
+                 ? addingNote
                  : "The balances of “\(engagement.entity(target)?.name ?? "")” will be replaced. Its journal entries stay as they are.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

@@ -160,6 +160,44 @@ extension Engagement {
         accounts.removeAll { $0.id == id }
     }
 
+    /// Changes an account's number, its name, or both. The number is what balances and journal
+    /// lines know the account by, so when it changes every one of them — this year's balances,
+    /// prior years', and journal entry lines, in every trial balance — is moved to the new
+    /// number. The grouping and type stay. Returns the account's id afterwards.
+    @discardableResult
+    public mutating func changeAccount(_ id: String, number rawNumber: String, name rawName: String) throws -> String {
+        guard let i = accounts.firstIndex(where: { $0.id == id }) else { throw TBError("Account \(id) isn't in the chart of accounts.") }
+        let number = rawNumber.trimmed, name = rawName.trimmed
+        guard !name.isEmpty else { throw TBError("Give the account a name.") }
+        let new = Account(number: number, name: name).id
+        if new != id {
+            if let other = account(new) {
+                throw TBError("\(new) is already an account in the chart (“\(other.name)”). Two accounts can't share a number\(number.isEmpty ? " or, without numbers, a name" : "").")
+            }
+            for e in entities.indices {
+                for b in entities[e].balances.indices where entities[e].balances[b].account == id { entities[e].balances[b].account = new }
+                for p in entities[e].priorPeriods.indices {
+                    for b in entities[e].priorPeriods[p].balances.indices where entities[e].priorPeriods[p].balances[b].account == id {
+                        entities[e].priorPeriods[p].balances[b].account = new
+                    }
+                }
+            }
+            for j in journalEntries.indices {
+                for l in journalEntries[j].lines.indices where journalEntries[j].lines[l].account == id { journalEntries[j].lines[l].account = new }
+            }
+        }
+        accounts[i].id = new
+        accounts[i].number = number
+        accounts[i].name = name
+        accounts.sort(by: accountPrecedes)
+        // Balances are kept in chart order.
+        let order = Dictionary(accounts.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for e in entities.indices {
+            entities[e].balances.sort { (order[$0.account] ?? 0) < (order[$1.account] ?? 0) }
+        }
+        return new
+    }
+
     public mutating func updateAccount(_ id: String, _ change: (inout Account) -> Void) {
         guard let i = accounts.firstIndex(where: { $0.id == id }) else { return }
         var a = accounts[i]
@@ -518,7 +556,8 @@ extension Engagement {
     /// chart, by account number (see `accountNameConflicts`). Without a decision the chart's name is
     /// kept and a note says so.
     public mutating func importTrialBalance(_ source: ImportedTB, into entityID: String,
-                                            resolving resolutions: [String: AccountNameResolution] = [:]) throws -> [String] {
+                                            resolving resolutions: [String: AccountNameResolution] = [:],
+                                            mode: ImportMode = .replace) throws -> [String] {
         guard let ei = entities.firstIndex(where: { $0.id == entityID }) else { throw TBError("Trial balance not found.") }
         // Decided on a copy, so an import that is refused leaves the chart as it was.
         var copy = self
@@ -529,6 +568,11 @@ extension Engagement {
         var balances: [Balance] = []
         var index: [String: Int] = [:]
         var renamed: [String] = []
+        // Adding to a trial balance keeps what is there. An account the file also has is either
+        // added to or given the file's amount; within the file, repeated rows always add up.
+        var kept: [Balance] = []
+        var fromFile = Set<String>()
+        if case .append = mode { kept = entities[ei].balances }
         for row in tb.rows {
             let incoming = Account(number: row.number, name: row.name, type: row.type)
             if let existing = account(incoming.id) {
@@ -547,6 +591,17 @@ extension Engagement {
                 index[incoming.id] = balances.count
                 balances.append(Balance(account: incoming.id, amount: row.amount))
             }
+            fromFile.insert(incoming.id)
+        }
+        if case .append(let overlap) = mode {
+            for old in kept {
+                if let at = index[old.account] {
+                    if overlap == .add { balances[at].amount += old.amount }
+                } else {
+                    index[old.account] = balances.count
+                    balances.append(old)
+                }
+            }
         }
         if renamed.count > 5 {
             warnings.append("…and \(renamed.count - 5) more accounts named differently here than in the chart. The chart names were kept.")
@@ -555,10 +610,22 @@ extension Engagement {
         let order = Dictionary(uniqueKeysWithValues: accounts.enumerated().map { ($1.id, $0) })
         balances.sort { (order[$0.account] ?? 0) < (order[$1.account] ?? 0) }
         entities[ei].balances = balances
-        entities[ei].source = tb.sourceName
+        if case .append = mode, !entities[ei].source.isEmpty, !entities[ei].source.contains(tb.sourceName) {
+            entities[ei].source += " + " + tb.sourceName
+        } else if entities[ei].source.isEmpty || mode == .replace {
+            entities[ei].source = tb.sourceName
+        }
         entities[ei].importedAt = Timestamp.now()
-        entities[ei].editedAt = ""
+        if mode == .replace { entities[ei].editedAt = "" }
         return warnings
+    }
+
+    /// What adding a file to a trial balance would meet: how many of its accounts the trial
+    /// balance doesn't have yet, and how many it already has a balance for.
+    public func appendPreview(_ source: ImportedTB, into entityID: String) -> (new: Int, already: Int) {
+        let have = Set(entity(entityID)?.balances.map(\.account) ?? [])
+        let coming = Set(source.rows.map { Account(number: $0.number, name: $0.name, type: $0.type).id })
+        return (coming.subtracting(have).count, coming.intersection(have).count)
     }
 
     /// Loads a file as one trial balance's closing balances for a prior year (book and tax the same).

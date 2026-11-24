@@ -8,11 +8,13 @@ let usage = """
 tbcli — work with a TB Tool trial balance file
 
   tbcli new <file.json> [--name "Client"] [--period YYYY-MM-DD]
-  tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names]
+  tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names] [--append | --append-replace]
                                                            import (or re-import) one trial balance; the
                                                            layout is detected (or taken from a saved one).
                                                            With --prior-year the file is that year's closing
                                                            balances (PP1, PP2…) instead of this year's.
+                                                           With --append the file is added to the trial
+                                                           balance instead of replacing its balances.
                                                            An account the file names differently from the chart
                                                            keeps the chart's name unless --use-file-names
   tbcli map <file.json> <mapping.csv>                      assign groupings: account,grouping
@@ -64,7 +66,7 @@ func positional(_ args: [String]) -> [String] {
         }
         if a.hasPrefix("--") {
             // Switches stand alone; every other option is followed by its value.
-            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names", "--binder"].contains(a)
+            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names", "--binder", "--append", "--append-replace"].contains(a)
             continue
         }
         out.append(a)
@@ -118,8 +120,11 @@ do {
         if rest.contains("--use-file-names") {
             for c in renames { decisions[c.accountID] = AccountNameResolution(.useFileName) }
         }
+        // --append adds the file to the trial balance instead of replacing its balances; an account
+        // both have gets the two amounts added together (or, with --append-replace, the file's).
+        let mode: ImportMode = rest.contains("--append-replace") ? .append(.replace) : (rest.contains("--append") ? .append(.add) : .replace)
         let warnings = try priorYear.map { try e.importPriorPeriod(tb, into: id, year: $0, resolving: decisions) }
-            ?? e.importTrialBalance(tb, into: id, resolving: decisions)
+            ?? e.importTrialBalance(tb, into: id, resolving: decisions, mode: mode)
         if !decisions.isEmpty { renames.forEach { print("  renamed \($0.number): “\($0.chartName)” → “\($0.fileName)”") } }
         try saveLogged(e, to: url, action: priorYear.map { "Import \($0) Balances" } ?? "Import \(name)")
         let m = result.mapping

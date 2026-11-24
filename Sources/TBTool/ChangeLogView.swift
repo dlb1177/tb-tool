@@ -17,9 +17,8 @@ struct ChangeLogView: View {
             }
             VStack(spacing: 0) {
                 PageHeader(title: "Change Log", subtitle: subtitle(e, shown: entries.count)) {
-                    TextField("Search the log", text: $query)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 220)
+                    SearchBox(prompt: "Search the log", text: $query)
+                        .frame(width: 240)
                     Menu {
                         ForEach(AppModel.ExportFormat.allCases, id: \.self) { format in
                             Button("Change Log as \(format.label)…") {

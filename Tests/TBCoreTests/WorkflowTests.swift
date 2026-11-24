@@ -433,4 +433,111 @@ final class WorkflowTests: XCTestCase {
         XCTAssertEqual(GroupingLibrary.lists(in: dir).map(\.name), ["S Corporation"])
         XCTAssertEqual(GroupingLibrary.lists(in: dir)[0].groupings, scorp.groupings)
     }
+
+    // MARK: Adding to a trial balance, and renumbering accounts
+
+    func money(_ s: String) -> Money { Money.parse(s)!.value }
+
+    func imported(_ rows: [(String, String, String)], named: String = "extra.csv") -> ImportedTB {
+        var tb = ImportedTB(sourceName: named)
+        tb.rows = rows.map { ImportedTB.Row(number: $0.0, name: $0.1, amount: money($0.2)) }
+        return tb
+    }
+
+    func testAddingAccountsAndBalancesToATrialBalance() throws {
+        let base = try TBCoreTests().sampleEngagement()
+        let before = Dictionary(uniqueKeysWithValues: base.entity("ashford")!.balances.map { ($0.account, $0.amount) })
+        let cash = before["10001"]!
+        // A supplement: one account Ashford already has, two it doesn't (one new to the chart altogether).
+        let extra = imported([("10001", "Ashford Checking (1042) - 2", "100.00"), ("10000", "Brighton Main (2087) - 2", "250.00"),
+                              ("19990", "Suspense", "-350.00"), ("19990", "Suspense", "-0.00")])
+        XCTAssertTrue(base.appendPreview(extra, into: "ashford") == (new: 2, already: 1))
+
+        // Added: what was there stays, the new accounts come in, and the shared one's amounts add up.
+        var added = base
+        _ = try added.importTrialBalance(extra, into: "ashford", mode: .append(.add))
+        let after = Dictionary(uniqueKeysWithValues: added.entity("ashford")!.balances.map { ($0.account, $0.amount) })
+        XCTAssertEqual(after.count, before.count + 2)
+        XCTAssertEqual(after["10001"], cash + money("100.00"))
+        XCTAssertEqual(after["10000"], money("250.00"))
+        XCTAssertEqual(after["19990"], money("-350.00"))
+        for (account, amount) in before where account != "10001" { XCTAssertEqual(after[account], amount, account) }
+        XCTAssertNotNil(added.account("19990"))
+        XCTAssertEqual(Ledger(added).total(.unadjusted, entity: "ashford"), .zero)
+        XCTAssertTrue(added.entity("ashford")!.source.hasSuffix(" + extra.csv"))
+        // The balances stay in chart order.
+        let order = added.sortedAccounts.map(\.id)
+        XCTAssertEqual(added.entity("ashford")!.balances.map(\.account), order.filter { after[$0] != nil })
+        // The other trial balances are not touched.
+        XCTAssertEqual(added.entity("brighton"), base.entity("brighton"))
+
+        // Or the file's amount stands for an account both have.
+        var replaced = base
+        _ = try replaced.importTrialBalance(extra, into: "ashford", mode: .append(.replace))
+        XCTAssertEqual(replaced.entity("ashford")!.balances.first { $0.account == "10001" }?.amount, money("100.00"))
+        XCTAssertEqual(replaced.entity("ashford")!.balances.count, before.count + 2)
+
+        // The default still replaces everything.
+        var swapped = base
+        _ = try swapped.importTrialBalance(extra, into: "ashford")
+        XCTAssertEqual(swapped.entity("ashford")!.balances.map(\.account), ["10000", "10001", "19990"])
+        XCTAssertEqual(swapped.entity("ashford")!.source, "extra.csv")
+        // What the change log says about an addition.
+        XCTAssertTrue(added.changes(since: base).contains { $0.hasPrefix("Ashford: unadjusted balances imported from") && $0.contains("3 accounts differ") },
+                      "\(added.changes(since: base))")
+    }
+
+    func testChangingAnAccountsNumberAndName() throws {
+        var e = try TBCoreTests().sampleEngagement()
+        e.applyGroupingMap(csv: try String(contentsOf: TBCoreTests.root.appendingPathComponent("grouping-map.csv"), encoding: .utf8))
+        var je = JournalEntry(number: "AJE-1", type: .adjusting, date: "2026-12-31", description: "Test")
+        je.lines = [JELine(entity: "ashford", account: "10001", amount: money("-500")), JELine(entity: "ashford", account: "14150", amount: money("500"))]
+        try e.post(je)
+        var o = RollForwardOptions()
+        o.opening = .carryBalanceSheet(closeInto: "32000")
+        var next = try e.rolledForward(o)       // so there is a prior year too
+        je.id = UUID().uuidString
+        try next.post(je)
+        let before = Ledger(next)
+        let grouping = next.account("10001")?.grouping
+        let type = next.account("10001")?.type
+        let cash = before.value(.book, entity: "ashford", account: "10001")
+        let prior = before.prior(.book, year: 2026, entity: "ashford", account: "10001")
+        XCTAssertFalse(cash.isZero || prior.isZero)
+
+        // The name alone.
+        XCTAssertEqual(try next.changeAccount("10001", number: "10001", name: " Ashford Operating "), "10001")
+        XCTAssertEqual(next.account("10001")?.name, "Ashford Operating")
+        // The number: balances, prior years and journal lines all move to it; the grouping and type stay.
+        XCTAssertEqual(try next.changeAccount("10001", number: "10900", name: "Ashford Operating"), "10900")
+        XCTAssertNil(next.account("10001"))
+        XCTAssertEqual(next.account("10900")?.grouping, grouping)
+        XCTAssertEqual(next.account("10900")?.type, type)
+        let after = Ledger(next)
+        XCTAssertEqual(after.value(.book, entity: "ashford", account: "10900"), cash)
+        XCTAssertEqual(after.prior(.book, year: 2026, entity: "ashford", account: "10900"), prior)
+        XCTAssertEqual(after.value(.book, entity: "ashford", account: "10001"), .zero)
+        XCTAssertEqual(next.journalEntries.flatMap { $0.lines.map(\.account) }.filter { $0 == "10001" }, [])
+        XCTAssertTrue(next.journalEntries.contains { $0.lines.contains { $0.account == "10900" } })
+        XCTAssertEqual(after.netIncome(.book, entity: "ashford"), before.netIncome(.book, entity: "ashford"))
+        XCTAssertEqual(after.total(.tax, entity: "ashford"), before.total(.tax, entity: "ashford"))
+        XCTAssertEqual(next.issues(), [])
+        // The chart and the balances stay in order.
+        XCTAssertEqual(next.accounts.map(\.id), next.sortedAccounts.map(\.id))
+        let order = next.accounts.map(\.id)
+        XCTAssertEqual(next.entity("ashford")!.balances.map(\.account), order.filter { id in next.entity("ashford")!.balances.contains { $0.account == id } })
+        // It reads back from the file the same.
+        XCTAssertEqual(try Store.decode(Store.encode(next)), next)
+
+        // A number another account has is refused, and nothing changes.
+        let kept = next
+        XCTAssertThrowsError(try next.changeAccount("10900", number: "14150", name: "Anything"))
+        XCTAssertThrowsError(try next.changeAccount("10900", number: "10900", name: "  "))
+        XCTAssertThrowsError(try next.changeAccount("nope", number: "1", name: "x"))
+        XCTAssertEqual(next, kept)
+        // An account kept by name takes a number, and one with a number can go back to being kept by name.
+        let named = try XCTUnwrap(next.accounts.first { $0.number.isEmpty })
+        XCTAssertEqual(try next.changeAccount(named.id, number: "59990", name: named.name), "59990")
+        XCTAssertEqual(try next.changeAccount("59990", number: "", name: named.name), named.id)
+    }
 }

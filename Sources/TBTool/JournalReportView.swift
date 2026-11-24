@@ -29,22 +29,7 @@ struct JournalReportView: View {
         let kinds = JEType.allCases.filter { type in entries.contains { $0.type == type } }
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Find an entry — number, description, account, amount…", text: $query)
-                        .textFieldStyle(.plain)
-                    if !query.isEmpty {
-                        Button {
-                            query = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+                SearchBox(prompt: "Find an entry — number, description, account, amount…", text: $query)
                 .frame(maxWidth: 360)
                 Spacer()
                 Text("\(entries.count) entr\(entries.count == 1 ? "y" : "ies")").foregroundStyle(.secondary).monospacedDigit()

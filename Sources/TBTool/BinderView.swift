@@ -348,22 +348,7 @@ struct BinderView: View {
                 }
                 .disabled(tree.folders.isEmpty || screen.filtering)
             }
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search files — index, name, folder…", text: $screen.query)
-                    .textFieldStyle(.plain)
-                if !screen.query.isEmpty {
-                    Button {
-                        screen.query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+            SearchBox(prompt: "Search files — index, name, folder…", text: $screen.query)
             .frame(maxWidth: 280)
             Picker("", selection: $screen.status) {
                 ForEach(BinderStatus.allCases, id: \.self) { s in

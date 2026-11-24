@@ -250,6 +250,22 @@ public struct JELine: Equatable, Sendable {
 
 /// A workpaper linked to a journal entry. `path` is relative to the trial balance file's folder
 /// when the workpaper lives inside it (so the folder can move), absolute otherwise.
+/// What an import does to a trial balance that already has balances.
+public enum ImportMode: Equatable, Sendable {
+    /// What a balance already in the trial balance becomes when the file has the same account.
+    public enum Overlap: Equatable, Sendable {
+        /// The file's amount is added to it.
+        case add
+        /// The file's amount takes its place.
+        case replace
+    }
+
+    /// The file's balances take the place of everything the trial balance had.
+    case replace
+    /// The file's accounts and balances join what is there. Accounts the file doesn't mention are untouched.
+    case append(Overlap)
+}
+
 public struct FileReference: Equatable, Sendable {
     public var path: String
     public var note: String

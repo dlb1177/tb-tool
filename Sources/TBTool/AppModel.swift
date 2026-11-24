@@ -37,6 +37,8 @@ struct ImportRequest: Identifiable, Equatable {
     var priorYear: Int? = nil
     /// Development aid: go straight to the account-name review, as if Import had been clicked.
     var reviewNames = false
+    /// Start on "add to" the trial balance, not "replace" it.
+    var appending = false
 }
 
 struct ChartImportRequest: Identifiable {
@@ -340,7 +342,7 @@ final class AppModel: ObservableObject {
     /// Applies a change. Returns false (and shows why) if the change was rejected; nothing is written in that case.
     /// `notes` are extra lines for the change log, ahead of what the change itself did.
     @discardableResult
-    func mutate(_ actionName: String, notes: [String] = [], _ body: (inout Engagement) throws -> Void) -> Bool {
+    func mutate(_ actionName: String, notes: [String] = [], describe: Bool = true, _ body: (inout Engagement) throws -> Void) -> Bool {
         guard var e = engagement else { return false }
         let old = e
         do {
@@ -349,12 +351,12 @@ final class AppModel: ObservableObject {
             alert = AlertInfo(title: "\(actionName) didn't go through", message: error.localizedDescription)
             return false
         }
-        if e != old { apply(e, previous: old, actionName: actionName, notes: notes) }
+        if e != old { apply(e, previous: old, actionName: actionName, notes: notes, describe: describe) }
         return true
     }
 
-    private func apply(_ new: Engagement, previous: Engagement, actionName: String, how: String = "", notes: [String] = []) {
-        commit(new, action: how.isEmpty ? actionName : "\(how): \(actionName)", notes: notes)
+    private func apply(_ new: Engagement, previous: Engagement, actionName: String, how: String = "", notes: [String] = [], describe: Bool = true) {
+        commit(new, action: how.isEmpty ? actionName : "\(how): \(actionName)", notes: notes, describe: describe || !how.isEmpty && notes.isEmpty)
         undoManager?.registerUndo(withTarget: self) { model in
             model.apply(previous, previous: new, actionName: actionName, how: model.undoManager?.isUndoing == true ? "Undo" : "Redo")
         }
@@ -363,11 +365,13 @@ final class AppModel: ObservableObject {
 
     /// Makes `new` the state of the file, adds a line to the change log saying what changed, and
     /// saves. The log only ever grows: undoing a change doesn't remove its line, it adds one.
-    private func commit(_ new: Engagement, action: String, notes: [String] = []) {
+    /// With `describe` false the notes say all there is to say (an account renumbered would
+    /// otherwise read as one account deleted and another added).
+    private func commit(_ new: Engagement, action: String, notes: [String] = [], describe: Bool = true) {
         var state = new
         let current = engagement
         state.auditLog = current?.auditLog ?? new.auditLog
-        state.log(action, details: notes + (current.map { state.changes(since: $0) } ?? []), by: actor)
+        state.log(action, details: notes + (describe ? (current.map { state.changes(since: $0) } ?? []) : []), by: actor)
         set(state)
         save()
     }
@@ -535,7 +539,7 @@ final class AppModel: ObservableObject {
 
     /// Choose one or more files (Excel, CSV, tab or other delimited text). Each is read, its layout
     /// predicted, and shown for confirmation before anything is imported.
-    func importPanel(replacing entityID: String? = nil, priorYear: Int? = nil) {
+    func importPanel(replacing entityID: String? = nil, priorYear: Int? = nil, appending: Bool = false) {
         guard engagement != nil else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = SourceReader.fileExtensions.compactMap { UTType(filenameExtension: $0) }
@@ -549,17 +553,18 @@ final class AppModel: ObservableObject {
                                             : "Choose the file that replaces this trial balance"
         }
         guard panel.runModal() == .OK else { return }
-        queueImports(panel.urls, replacing: entityID, priorYear: priorYear)
+        queueImports(panel.urls, replacing: entityID, priorYear: priorYear, appending: appending)
     }
 
-    func queueImports(_ urls: [URL], replacing entityID: String? = nil, priorYear: Int? = nil) {
+    func queueImports(_ urls: [URL], replacing entityID: String? = nil, priorYear: Int? = nil, appending: Bool = false) {
         var errors: [String] = []
         var requests: [ImportRequest] = []
         for url in urls {
             do {
                 let sheets = try SourceReader.read(url: url)
                 requests.append(ImportRequest(sourceName: url.lastPathComponent, sheets: sheets, replacing: entityID,
-                                              suggestedName: TBImporter.suggestedEntityName(fileName: url.lastPathComponent), priorYear: priorYear))
+                                              suggestedName: TBImporter.suggestedEntityName(fileName: url.lastPathComponent), priorYear: priorYear,
+                                              appending: appending))
             } catch {
                 errors.append(error.localizedDescription)
             }
@@ -606,16 +611,18 @@ final class AppModel: ObservableObject {
     @discardableResult
     func commitImport(_ request: ImportRequest, tb: ImportedTB, mapping: ImportMapping, header: [String]?,
                       target: String?, newName: String, rememberLayout: Bool, priorYear: Int? = nil,
-                      resolutions: [String: AccountNameResolution] = [:]) -> Bool {
+                      resolutions: [String: AccountNameResolution] = [:], mode: ImportMode = .replace) -> Bool {
         var warnings: [String] = []
         var landed: String?
-        let action = priorYear.map { "Import \($0) Balances" } ?? (target == nil ? "Import \(newName)" : "Replace Trial Balance")
+        let adding = target != nil && priorYear == nil && mode != .replace
+        let met = adding ? engagement?.appendPreview(tb, into: target!) : nil
+        let action = priorYear.map { "Import \($0) Balances" } ?? (target == nil ? "Import \(newName)" : (adding ? "Add to Trial Balance" : "Replace Trial Balance"))
         let ok = mutate(action) { e in
             let id = try target ?? e.addEntity(named: newName)
             if let priorYear {
                 warnings = try e.importPriorPeriod(tb, into: id, year: priorYear, resolving: resolutions)
             } else {
-                warnings = try e.importTrialBalance(tb, into: id, resolving: resolutions)
+                warnings = try e.importTrialBalance(tb, into: id, resolving: resolutions, mode: target == nil ? .replace : mode)
             }
             landed = id
         }
@@ -631,6 +638,9 @@ final class AppModel: ObservableObject {
             // Make sure the new column is on screen.
             let back = (e.currentYear ?? priorYear + 1) - priorYear
             if priorCount < back { UserDefaults.standard.set(back, forKey: "view.priorCount") }
+        } else if let met {
+            status = "Added to \(name): \(met.new) new account\(met.new == 1 ? "" : "s")"
+                + (met.already > 0 ? ", \(met.already) it already had (\(mode == .append(.add) ? "amounts added" : "amounts replaced"))" : "")
         } else {
             status = "Imported \(name): \(tb.accountCount) accounts"
         }
@@ -805,6 +815,27 @@ final class AppModel: ObservableObject {
         } else if let id = row.groupingID {
             showGroupDetail(groupingID: id, basis: basis)
         }
+    }
+
+    func showEditAccount(_ id: String) {
+        guard engagement?.account(id) != nil else { return }
+        Windows.shared.close("edit-account")
+        Windows.shared.show("edit-account", title: "Edit Account", size: NSSize(width: 500, height: 320), minSize: NSSize(width: 460, height: 300)) {
+            EditAccountSheet(accountID: id)
+        }
+    }
+
+    /// Changes an account's number and name. The change log gets one plain line saying so.
+    @discardableResult
+    func changeAccount(_ id: String, number: String, name: String) -> Bool {
+        guard let before = engagement?.account(id) else { return false }
+        let n = number.trimmingCharacters(in: .whitespaces), t = name.trimmingCharacters(in: .whitespaces)
+        var notes: [String] = []
+        if n != before.number { notes.append("Account number \(before.number.isEmpty ? "(none)" : before.number) → \(n.isEmpty ? "(none)" : n) (“\(t)”); its balances and journal lines moved with it") }
+        if t != before.name { notes.append("Account \(n.isEmpty ? t : n) renamed: “\(before.name)” → “\(t)”") }
+        let ok = mutate("Edit Account", notes: notes, describe: false) { try $0.changeAccount(id, number: number, name: name) }
+        if ok { status = notes.first ?? "" }
+        return ok
     }
 
     func showNewAccount() {

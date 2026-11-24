@@ -16,6 +16,9 @@ struct AccountSearchField: NSViewRepresentable {
     var keepOrder = false
     /// With this, the field is a picker that adds: choosing calls it and empties the field for the next one.
     var onChoose: ((String) -> Void)? = nil
+    /// Set to put the cursor in the field (a line that was just added); `focusTaken` is told once it has.
+    var takeFocus = false
+    var focusTaken: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -38,6 +41,14 @@ struct AccountSearchField: NSViewRepresentable {
     func updateNSView(_ field: SearchTextField, context: Context) {
         let c = context.coordinator
         c.parent = self
+        if takeFocus {
+            let taken = focusTaken
+            // Once the field is in its window.
+            DispatchQueue.main.async {
+                if field.window?.firstResponder !== field.currentEditor() || field.currentEditor() == nil { field.window?.makeFirstResponder(field) }
+                taken?()
+            }
+        }
         // Show the chosen account, but never overwrite what is being typed.
         if field.currentEditor() == nil, c.shownID != accountID {
             c.shownID = accountID
