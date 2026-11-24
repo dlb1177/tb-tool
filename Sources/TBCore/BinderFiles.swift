@@ -416,15 +416,48 @@ public enum BinderIndexer {
         return BinderIndex(prefix: pad(n, width))
     }
 
-    /// The name an item has after its title is changed: the index stays in front.
-    public static func retitle(_ path: String, to title: String, in tree: BinderTree) -> [BinderRename] {
+    /// The part of an item's name that renaming changes, and the extension that stays: for
+    /// "2000.02 GL.xlsx", "GL" and ".xlsx". A folder has no extension. A placeholder is named
+    /// for its document, so it is the document's name that is split.
+    public static func nameParts(of item: BinderItem) -> (stem: String, ext: String) {
+        if item.isFolder { return (item.title, "") }
+        let name = item.displayTitle
+        let ext = (name as NSString).pathExtension
+        // An ending counts as an extension only if it looks like one ("12.31" is part of a name).
+        let real = !ext.isEmpty && ext.count <= 8 && ext.allSatisfy { $0.isLetter || $0.isNumber } && ext.contains(where: \.isLetter)
+            && name.count > ext.count + 1
+        return real ? (String(name.dropLast(ext.count + 1)), "." + ext) : (name, "")
+    }
+
+    /// The rename that changes an item's name to `typed`. The index stays in front and the
+    /// extension stays behind: only what is between them changes, so a file can't lose its type
+    /// by being renamed. (An extension typed again at the end is not doubled.)
+    public static func retitle(_ path: String, to typed: String, in tree: BinderTree) -> [BinderRename] {
         guard let item = tree.item(path) else { return [] }
-        let clean = title.trimmed
-        guard !clean.isEmpty, !clean.contains("/"), !clean.contains(":") else { return [] }
-        let name = item.index.map { $0.text + " " + clean } ?? clean
+        let parts = nameParts(of: item)
+        var clean = typed.trimmed
+        if !parts.ext.isEmpty, clean.lowercased().hasSuffix(parts.ext.lowercased()) { clean = String(clean.dropLast(parts.ext.count)).trimmed }
+        guard !clean.isEmpty, !clean.contains("/"), !clean.contains(":"), !clean.hasPrefix(".") else { return [] }
+        let document = clean + parts.ext
+        let title = item.isPlaceholder ? BinderPlaceholder.tag + document + ".txt" : document
+        let name = item.index.map { $0.text + " " + title } ?? title
         guard name != item.name else { return [] }
         let parent = item.parentPath
         return [BinderRename(from: path, to: parent.isEmpty ? name : parent + "/" + name, isFolder: item.isFolder)]
+    }
+
+    /// Moves several files into a folder, each with that folder's next index, in the order the
+    /// binder lists them. Files already in the folder are left where they are.
+    public static func file(_ paths: Set<String>, into folderPath: String, in tree: BinderTree) -> [BinderRename] {
+        guard tree.item(folderPath)?.isFolder == true else { return [] }
+        var taken = 0
+        var out: [BinderRename] = []
+        for item in tree.all where paths.contains(item.path) && !item.isFolder && item.parentPath != folderPath {
+            let name = nextFileIndex(in: folderPath, tree: tree, taking: taken).map { $0.text + " " + item.title } ?? item.name
+            out.append(BinderRename(from: item.path, to: folderPath + "/" + name))
+            taken += 1
+        }
+        return ordered(out)
     }
 
     /// Renumbers a folder's indexed files 01, 02, 03… in their present order, closing any gaps.

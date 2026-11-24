@@ -81,6 +81,41 @@ public enum Exporter {
     }
 }
 
+/// The shaded bands that set a report's rows apart when it is exported: the column titles, a
+/// section, a grouping and its subgroups, a journal entry's heading, a grand total. Excel and
+/// PDF use the same ones.
+public enum ReportBand: Int, CaseIterable, Sendable {
+    case none, columns, section, group, subgroup, entry, total
+
+    /// The dark blue of the column titles, and of a section's lettering.
+    public static let ink = "1F3864"
+
+    /// The band's colour, as six hex digits.
+    public var hex: String {
+        switch self {
+        case .none: return "FFFFFF"
+        case .columns: return ReportBand.ink
+        case .section: return "BDD7EE"
+        case .group: return "DDEBF7"
+        case .subgroup: return "F0F6FC"
+        case .entry: return "EDEDED"
+        case .total: return "E2E2E2"
+        }
+    }
+
+    /// The band a row is drawn on.
+    public init(_ row: ReportRow) {
+        switch row.style {
+        case .section: self = .section
+        case .heading: self = .entry
+        case .total: self = .total
+        // A grouping that heads its accounts; a subgroup inside it is a shade lighter.
+        case .subtotal where row.groupingID != nil: self = row.parentRowID == nil ? .group : .subgroup
+        default: self = .none
+        }
+    }
+}
+
 /// A minimal .xlsx writer: real numeric cells, bold headers and totals, frozen header rows,
 /// one sheet per report. No dependencies — the zip container is written by hand (stored, no compression).
 enum XLSXWriter {
@@ -88,6 +123,7 @@ enum XLSXWriter {
     static func workbook(_ tables: [ReportTable]) -> Data {
         let names = sheetNames(tables)
         var files: [(String, String)] = []
+        var styles = StyleBook()
 
         var types = #"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>"#
         var sheetsXML = ""
@@ -111,17 +147,59 @@ enum XLSXWriter {
         }
         files.append(("xl/workbook.xml", #"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>\#(sheetsXML)</sheets><definedNames>\#(printTitles)</definedNames></workbook>"#))
         files.append(("xl/_rels/workbook.xml.rels", rels))
-        files.append(("xl/styles.xml", styles))
-        for (i, t) in tables.enumerated() {
-            files.append(("xl/worksheets/sheet\(i + 1).xml", sheet(t)))
+        // The sheets first: they say which styles are needed.
+        let sheets = tables.map { sheet($0, &styles) }
+        files.append(("xl/styles.xml", styles.xml))
+        for (i, xml) in sheets.enumerated() {
+            files.append(("xl/worksheets/sheet\(i + 1).xml", xml))
         }
         return Zip.archive(files.map { ($0.0, Data($0.1.utf8)) })
     }
 
-    // Cell style indexes into cellXfs below.
-    private static let sText = 0, sBold = 1, sMoney = 2, sMoneyBold = 3, sHeader = 4, sMoneyTotal = 5, sHeaderRight = 6, sBoldTop = 7, sClient = 8, sEntry = 9, sNote = 10
+    /// How a cell looks. Styles are numbered as they are first asked for, and the style sheet
+    /// is written from those that were.
+    struct CellStyle: Hashable {
+        enum Font: Int { case plain, bold, client, note, onDark, title }
+        var font = Font.plain
+        var fill = ReportBand.none
+        /// A line over the cell, or a line over and a double line under (a grand total).
+        var top = false, double = false
+        var money = false
+        var right = false
+    }
 
-    private static let styles = ##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00_);\(#,##0.00\)"/></numFmts><fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font><font><i/><sz val="10"/><color rgb="FF595959"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEDEDED"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color auto="1"/></bottom><diagonal/></border><border><left/><right/><top style="thin"><color auto="1"/></top><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="11"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="164" fontId="1" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf><xf numFmtId="0" fontId="1" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"##
+    struct StyleBook {
+        private(set) var styles: [CellStyle] = [CellStyle()]
+        private var index: [CellStyle: Int] = [CellStyle(): 0]
+
+        mutating func id(_ style: CellStyle) -> Int {
+            if let n = index[style] { return n }
+            styles.append(style)
+            index[style] = styles.count - 1
+            return styles.count - 1
+        }
+
+        var xml: String {
+            let bands = ReportBand.allCases
+            var out = ##"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00_);\(#,##0.00\)"/></numFmts>"##
+            out += #"<fonts count="6"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font><font><i/><sz val="10"/><color rgb="FF595959"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FF\#(ReportBand.ink)"/><name val="Calibri"/></font></fonts>"#
+            out += #"<fills count="\#(bands.count + 1)"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>"#
+            for band in bands.dropFirst() {
+                out += #"<fill><patternFill patternType="solid"><fgColor rgb="FF\#(band.hex)"/><bgColor indexed="64"/></patternFill></fill>"#
+            }
+            out += #"</fills><borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top style="thin"><color auto="1"/></top><bottom/><diagonal/></border><border><left/><right/><top style="thin"><color auto="1"/></top><bottom style="double"><color auto="1"/></bottom><diagonal/></border></borders>"#
+            out += #"<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="\#(styles.count)">"#
+            for s in styles {
+                // Fill 1 is the pattern Excel reserves; the bands start at 2.
+                let fill = s.fill == .none ? 0 : s.fill.rawValue + 1
+                let border = s.double ? 2 : (s.top ? 1 : 0)
+                out += #"<xf numFmtId="\#(s.money ? 164 : 0)" fontId="\#(s.font.rawValue)" fillId="\#(fill)" borderId="\#(border)" xfId="0" applyNumberFormat="\#(s.money ? 1 : 0)" applyFont="1" applyFill="\#(fill == 0 ? 0 : 1)" applyBorder="\#(border == 0 ? 0 : 1)""#
+                out += s.right ? #" applyAlignment="1"><alignment horizontal="right"/></xf>"# : "/>"
+            }
+            out += #"</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#
+            return out
+        }
+    }
 
     /// The row the column titles sit on: row 1 for flat data, otherwise below the heading and a blank row.
     static func headerRow(_ t: ReportTable) -> Int {
@@ -129,7 +207,7 @@ enum XLSXWriter {
         return head.isEmpty ? 1 : head.count + 2
     }
 
-    private static func sheet(_ t: ReportTable) -> String {
+    private static func sheet(_ t: ReportTable, _ styles: inout StyleBook) -> String {
         var xml = #"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">"#
         let head = Exporter.headingLines(t)
         let titleRow = headerRow(t)
@@ -142,47 +220,57 @@ enum XLSXWriter {
         }
         xml += "</cols><sheetData>"
 
-        func textCell(_ col: Int, _ row: Int, _ s: String, _ style: Int) -> String {
-            #"<c r="\#(ref(col, row))" t="inlineStr" s="\#(style)"><is><t xml:space="preserve">\#(esc(s))</t></is></c>"#
+        func textCell(_ col: Int, _ row: Int, _ s: String, _ style: CellStyle) -> String {
+            #"<c r="\#(ref(col, row))" t="inlineStr" s="\#(styles.id(style))"><is><t xml:space="preserve">\#(esc(s))</t></is></c>"#
         }
-        func moneyCell(_ col: Int, _ row: Int, _ m: Money, _ style: Int) -> String {
-            #"<c r="\#(ref(col, row))" s="\#(style)"><v>\#(m.plain)</v></c>"#
+        func moneyCell(_ col: Int, _ row: Int, _ m: Money, _ style: CellStyle) -> String {
+            var style = style
+            style.money = true
+            return #"<c r="\#(ref(col, row))" s="\#(styles.id(style))"><v>\#(m.plain)</v></c>"#
+        }
+        func emptyCell(_ col: Int, _ row: Int, _ style: CellStyle) -> String {
+            #"<c r="\#(ref(col, row))" s="\#(styles.id(style))"/>"#
         }
 
         // Client name large, report title bold, the rest plain.
         for (i, line) in head.enumerated() {
-            xml += #"<row r="\#(i + 1)">\#(textCell(0, i + 1, line, i == 0 ? sClient : (i == 1 ? sBold : sText)))</row>"#
+            xml += #"<row r="\#(i + 1)">\#(textCell(0, i + 1, line, CellStyle(font: i == 0 ? .client : (i == 1 ? .bold : .plain))))</row>"#
         }
         var r = titleRow
         xml += #"<row r="\#(r)">"#
+        // A flat table is data for another program: its headings stay plain.
         for (i, c) in t.columns.enumerated() {
-            xml += textCell(i, r, c.title, c.kind == .money ? sHeaderRight : sHeader)
+            xml += textCell(i, r, c.title, t.flat ? CellStyle(font: .bold, top: false, right: c.kind == .money)
+                                                  : CellStyle(font: .onDark, fill: .columns, right: c.kind == .money))
         }
         xml += "</row>"
         for row in t.rows {
             r += 1
             xml += #"<row r="\#(r)">"#
-            if row.style == .heading {
-                // A block's heading is shaded right across, so each entry stands apart from the last.
-                for i in t.columns.indices {
-                    if i < row.cells.count, case .text(let s) = row.cells[i] { xml += textCell(i, r, s, sEntry) } else { xml += #"<c r="\#(ref(i, r))" s="\#(sEntry)"/>"# }
-                }
-                xml += "</row>"
-                continue
+            let band = ReportBand(row)
+            var style = CellStyle(fill: band)
+            switch row.style {
+            case .normal, .blank: break
+            case .note: style.font = .note
+            case .section: style.font = .title
+            case .heading:
+                style.font = .bold
+                style.top = true
+            case .subtotal:
+                style.font = .bold
+                style.top = band == .none
+            case .total:
+                style.font = .bold
+                style.top = true
+                style.double = true
             }
-            for (i, cell) in row.cells.enumerated() {
-                switch (cell, row.style) {
-                case (.text(let s), .note): xml += textCell(i, r, s, sNote)
-                case (.empty, .total), (.empty, .subtotal):
-                    xml += #"<c r="\#(ref(i, r))" s="\#(sBoldTop)"/>"#
-                case (.empty, _):
-                    break
-                case (.text(let s), .normal): xml += textCell(i, r, s, sText)
-                case (.text(let s), .section): xml += textCell(i, r, s, sBold)
-                case (.text(let s), _): xml += textCell(i, r, s, sBoldTop)
-                case (.money(let m), .normal): xml += moneyCell(i, r, m, sMoney)
-                case (.money(let m), .section): xml += moneyCell(i, r, m, sMoneyBold)
-                case (.money(let m), _): xml += moneyCell(i, r, m, sMoneyTotal)
+            // A band, and the lines of a total, run right across the table.
+            let across = band != .none || row.style == .total || row.style == .subtotal
+            for i in 0..<max(row.cells.count, across ? t.columns.count : 0) {
+                switch i < row.cells.count ? row.cells[i] : .empty {
+                case .empty: if across { xml += emptyCell(i, r, style) }
+                case .text(let s): xml += textCell(i, r, s, style)
+                case .money(let m): xml += moneyCell(i, r, m, style)
                 }
             }
             xml += "</row>"

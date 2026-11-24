@@ -23,6 +23,19 @@ enum Snapshotter {
         if let first {
             steps.append(("entity", { model.selection = .entity(first.id) }))
             steps.append(("entity-grouped", { UserDefaults.standard.set(true, forKey: "entity.byGrouping") }))
+            // Select a few rows and rest the pointer on them: the panel with their total in each column.
+            steps.append(("selection-total", {
+                UserDefaults.standard.set(false, forKey: "entity.byGrouping")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    guard let table = find(GridTableView.self, in: NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false }?.contentView) else { return }
+                    table.selectRowIndexes(IndexSet(3...7), byExtendingSelection: false)
+                    let rect = table.rect(ofRow: 5)
+                    table.hoverHandler?(table.convert(NSPoint(x: rect.minX + 420, y: rect.midY), to: nil))
+                }
+            }))
+            steps.append(("selection-cleared", {
+                find(GridTableView.self, in: NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false }?.contentView)?.deselectAll(nil)
+            }))
             // Click a heading while laid out by grouping: the list goes plain, sorted, and the button with it.
             steps.append(("entity-grouped-sorted", {
                 guard let table = find(GridTableView.self, in: NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false }?.contentView),
@@ -52,6 +65,7 @@ enum Snapshotter {
             let reports = Reports(ledger: ledger)
             try? PDFReport.data([reports.journalReport()]).write(to: dir.appendingPathComponent("journal.pdf"))
             try? PDFReport.data([reports.consolidating(basis: .book, hideZero: true, prior: 1)]).write(to: dir.appendingPathComponent("consolidating.pdf"))
+            try? PDFReport.data([reports.groupingSummary(basis: .book, detail: true, prior: 0, hideZero: true)]).write(to: dir.appendingPathComponent("grouping-detail.pdf"))
             try? PDFReport.data(reports.workbook(prior: 1, hideZero: true).filter { !$0.flat && $0.sheetName != "Accounts" }).write(to: dir.appendingPathComponent("all.pdf"))
             try? Exporter.xlsx(reports.workbook(prior: 1, hideZero: true)).write(to: dir.appendingPathComponent("workbook.xlsx"))
             try? Data(Exporter.csv(reports.journalReport(), heading: true).utf8).write(to: dir.appendingPathComponent("journal.csv"))
@@ -510,6 +524,100 @@ enum Snapshotter {
                 model.alert = nil
                 listing("after a document from outside replaced \(placeholder.name) (in the test trash: \((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("trash").path)) ?? []))")
             }))
+            // A real click on a row, then Return: the name becomes a field to type in, as in Finder.
+            func mainWindow() -> NSWindow? { NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false } }
+            func post(_ type: NSEvent.EventType, at point: NSPoint, flags: NSEvent.ModifierFlags = []) {
+                guard let window = mainWindow(), let e = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+                NSApp.postEvent(e, atStart: false)
+            }
+            func key(_ code: UInt16, _ characters: String) {
+                guard let window = mainWindow(), let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                                         windowNumber: window.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                                                         isARepeat: false, keyCode: code) else { return }
+                NSApp.postEvent(e, atStart: false)
+            }
+            func rowPoint(_ suffix: String) -> NSPoint? {
+                guard let screen = BinderScreen.current, let content = mainWindow()?.contentView,
+                      let frame = screen.rowFrames.first(where: { $0.key.hasSuffix(suffix) })?.value else { return nil }
+                var p = NSPoint(x: frame.minX + 260, y: frame.midY)
+                if !content.isFlipped { p.y = content.bounds.height - p.y }
+                return content.convert(p, to: nil)
+            }
+            steps.append(("binder-click", {
+                Windows.shared.closeAll()
+                UserDefaults.standard.set(false, forKey: "binder.flat")
+                model.collapsedFolders = []
+                model.selection = .binder
+                mainWindow()?.makeKeyAndOrderFront(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    guard let a = rowPoint("Organizer.pdf"), let b = rowPoint("Bank statement - Ashford.pdf") else {
+                        FileHandle.standardError.write(Data("  no row frames: \(BinderScreen.current?.rowFrames.count ?? -1)\n".utf8))
+                        return
+                    }
+                    post(.leftMouseDown, at: a)
+                    post(.leftMouseUp, at: a)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        // ⌘-click a second row: both are selected, and the press is matched to its row.
+                        post(.leftMouseDown, at: b, flags: .command)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            FileHandle.standardError.write(Data("  press matched to: \(BinderScreen.current?.pressed?.path ?? "nothing")\n".utf8))
+                            post(.leftMouseUp, at: b, flags: .command)
+                        }
+                    }
+                }
+            }))
+            steps.append(("binder-rename", {
+                FileHandle.standardError.write(Data("  selected after a click and a ⌘-click: \((BinderScreen.current?.selection ?? []).sorted())\n".utf8))
+                guard let b = rowPoint("Bank statement - Ashford.pdf") else { return }
+                post(.leftMouseDown, at: b)
+                post(.leftMouseUp, at: b)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { key(36, "\r") }
+            }))
+            steps.append(("binder-renamed", {
+                FileHandle.standardError.write(Data("  renaming: \(BinderScreen.current?.renaming ?? "nothing") — field holds “\(BinderScreen.current?.renameText ?? "")”\n".utf8))
+                BinderScreen.current?.renameText = "Bank statement - Ashford (December)"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    key(36, "\r")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { listing("after typing a new name and pressing Return") }
+                }
+            }))
+            // A new version let go on a file; a file turned into a placeholder; several files moved at once.
+            steps.append(("binder-onfile", {
+                Windows.shared.closeAll()
+                model.trashFolder = dir.appendingPathComponent("trash", isDirectory: true)
+                guard let tree = model.binder, let target = tree.files.first(where: { $0.index?.text == "4000.01" }) else { return }
+                let drop = FileManager.default.temporaryDirectory.appendingPathComponent("tbtool-drop-\(UUID().uuidString.prefix(6))", isDirectory: true)
+                try? FileManager.default.createDirectory(at: drop, withIntermediateDirectories: true)
+                let url = drop.appendingPathComponent("Organizer - signed copy.pdf")
+                try? Data("the new version".utf8).write(to: url)
+                model.toggleSignOff(.prepared, on: target.path)
+                model.showDropOnFile(.outside(url), target: target.path)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    model.replaceVersion(.outside(url), of: target.path)
+                    let now = (try? String(contentsOf: tree.url(target), encoding: .utf8)) ?? "?"
+                    listing("after a new version replaced \(target.name) (it now reads “\(now)”; changed since sign-off: \(!model.staleSignOffs.isEmpty))")
+                    model.alert = nil
+                }
+            }))
+            steps.append(("binder-version-undone", {
+                Windows.shared.closeAll()
+                model.undoManager?.undo()
+                if let tree = model.binder, let target = tree.files.first(where: { $0.index?.text == "4000.01" }) {
+                    listing("after undoing the new version (it reads “\(((try? String(contentsOf: tree.url(target), encoding: .utf8)) ?? "?").trimmingCharacters(in: .whitespacesAndNewlines))” again)")
+                }
+            }))
+            steps.append(("binder-to-placeholder", {
+                guard let tree = model.binder, let target = tree.files.first(where: { $0.index?.text == "4000.01" }) else { return }
+                model.turnIntoPlaceholder(target.path)
+                listing("after turning \(target.name) into a placeholder")
+                // Two files from one folder into another, as one move.
+                let pair = Set(model.binder!.files.filter { $0.index?.prefix == "2000" }.prefix(2).map(\.path))
+                if let other = model.binder!.folders.first(where: { $0.name.contains("Additional") }) {
+                    model.applyBinderRenames(BinderIndexer.file(pair, into: other.path, in: model.binder!), actionName: "Move in Binder")
+                    FileHandle.standardError.write(Data("  two files moved together: \(model.binder!.item(other.path)!.children.map(\.name))\n".utf8))
+                }
+            }))
             steps.append(("binder-log-2", { model.selection = .changeLog }))
         }
 
@@ -520,7 +628,7 @@ enum Snapshotter {
 
         func capture(_ name: String) {
             for window in NSApp.windows where window.isVisible {
-                guard let view = window.contentView?.superview ?? window.contentView, view.bounds.width > 200,
+                guard let view = window.contentView?.superview ?? window.contentView, view.bounds.width > (window is NSPanel ? 40 : 200),
                       let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
                 view.cacheDisplay(in: view.bounds, to: rep)
                 let key = window.identifier?.rawValue ?? ""

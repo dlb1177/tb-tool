@@ -162,6 +162,16 @@ final class AppModel: ObservableObject {
             open(URL(fileURLWithPath: args[i + 1]), remember: false)
             return
         }
+        // Another window of the app, opened beside one that is already running: it shows the
+        // file it was asked for, or the welcome screen, never the file the first one has open.
+        if let i = args.firstIndex(of: "--tb-file"), i + 1 < args.count {
+            open(URL(fileURLWithPath: args[i + 1]))
+            return
+        }
+        if args.contains("--tb-welcome") {
+            refreshCandidates()
+            return
+        }
         refreshCandidates()
         if engagement != nil { return }
         if candidates.count == 1 {
@@ -204,11 +214,32 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openPanel() {
+    func openPanel(newWindow: Bool = false) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
-        panel.message = "Choose a trial balance JSON file"
-        if panel.runModal() == .OK, let url = panel.url { open(url) }
+        panel.directoryURL = newWindow ? folder?.deletingLastPathComponent() : nil
+        panel.message = newWindow ? "Choose a trial balance JSON file to open in another window" : "Choose a trial balance JSON file"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if newWindow { openInNewWindow(url) } else { open(url) }
+    }
+
+    /// Opens a trial balance beside the one that is open, in a window of its own. Each window
+    /// is its own copy of the app, so each has its own undo, its own entry windows, and can't
+    /// disturb the other. With no file, the new window shows the welcome screen.
+    func openInNewWindow(_ url: URL?) {
+        if let url, url.standardizedFileURL == fileURL?.standardizedFileURL {
+            alert = AlertInfo(title: "\(url.lastPathComponent) is already open here", message: "Open a different trial balance in the new window.")
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        config.arguments = url.map { ["--tb-file", $0.path] } ?? ["--tb-welcome"]
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { [weak self] _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.alert = AlertInfo(title: "Couldn't open another window", message: error.localizedDescription)
+            }
+        }
     }
 
     /// New files start with a setup window: client and binder details, the current year, and the grouping list.
@@ -1081,17 +1112,204 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Changes the name of a file or folder. Its index stays in front.
+    /// Asks for a new name for a file or folder. Its index stays in front and its extension
+    /// stays behind; only the name between them is offered for changing.
     func renameBinderItem(_ path: String) {
         guard let tree = binder, let item = tree.item(path) else { return }
-        guard let answers = ask("Rename “\(item.displayTitle)”", item.index == nil ? "" : "Its index, \(item.index!.text), stays in front. To change the index, use Set Index.",
-                                fields: [("Name", item.title, "")], button: "Rename") else { return }
-        let renames = BinderIndexer.retitle(path, to: answers[0], in: tree)
-        if renames.isEmpty {
-            if answers[0] != item.title { alert = AlertInfo(title: "That name can't be used", message: "A name can't be empty or have “/” or “:” in it.") }
-            return
+        let parts = BinderIndexer.nameParts(of: item)
+        var note = item.index.map { "Its index, \($0.text), stays in front." } ?? ""
+        if !parts.ext.isEmpty { note += (note.isEmpty ? "" : " ") + "Its extension, \(parts.ext), stays as it is." }
+        guard let answers = ask("Rename “\(item.displayTitle)”", note, fields: [("Name", parts.stem, "")], button: "Rename") else { return }
+        renameBinderItem(path, to: answers[0])
+    }
+
+    /// Renames a file or folder to `name` (the part between its index and its extension).
+    /// Returns where the item is afterwards.
+    @discardableResult
+    func renameBinderItem(_ path: String, to name: String) -> String {
+        guard let tree = binder, let item = tree.item(path) else { return path }
+        let renames = BinderIndexer.retitle(path, to: name, in: tree)
+        guard let rename = renames.first else {
+            let typed = name.trimmingCharacters(in: .whitespaces)
+            if typed != BinderIndexer.nameParts(of: item).stem, typed + BinderIndexer.nameParts(of: item).ext != item.displayTitle {
+                alert = AlertInfo(title: "That name can't be used", message: "A name can't be empty, start with a full stop, or have “/” or “:” in it.")
+            }
+            return path
         }
-        applyBinderRenames(renames, actionName: "Rename")
+        return applyBinderRenames(renames, actionName: "Rename") ? rename.to : path
+    }
+
+    // MARK: A file let go on another file
+
+    /// Asks what a file let go on another file should do: replace it as a new version, take its
+    /// index, or simply join the folder.
+    func showDropOnFile(_ source: PlaceholderArrival, target: String) {
+        guard binder?.item(target) != nil else { return }
+        Windows.shared.close("binder-onfile")
+        Windows.shared.show("binder-onfile", title: "File Dropped on a File", size: NSSize(width: 600, height: 360), minSize: NSSize(width: 560, height: 330)) {
+            DropOnFileView(source: source, target: target)
+        }
+    }
+
+    /// The name a new version takes: the old file's, index and all. Only if the new file is of
+    /// another type does the extension follow it, so the name still says what the file is.
+    func versionName(for source: PlaceholderArrival, replacing target: BinderItem) -> String {
+        let newExt = (source.name as NSString).pathExtension, oldExt = (target.name as NSString).pathExtension
+        guard !newExt.isEmpty, newExt.lowercased() != oldExt.lowercased() else { return target.name }
+        return (oldExt.isEmpty ? target.name : (target.name as NSString).deletingPathExtension) + "." + newExt
+    }
+
+    /// Puts a new version of a document in the old one's place. The new file takes the old
+    /// one's name and index; the old one goes to the Trash. Journal entries keep referring to
+    /// it, and its sign-off marks stay but show as changed, since it is no longer the file that
+    /// was signed.
+    @discardableResult
+    func replaceVersion(_ source: PlaceholderArrival, of targetPath: String) -> Bool {
+        guard let folder, let tree = binder, let target = tree.item(targetPath), !target.isFolder, let before = engagement else { return false }
+        let fm = FileManager.default
+        let home = target.parentPath
+        let oldURL = folder.appendingPathComponent(targetPath)
+        var inside: String?
+        let newURL: URL
+        switch source {
+        case .inside(let p):
+            inside = p
+            newURL = folder.appendingPathComponent(p)
+        case .outside(let url): newURL = url
+        }
+        let copy: Bool = { if case .outside = source { return UserDefaults.standard.bool(forKey: "binder.addCopies") }; return false }()
+        let name = versionName(for: source, replacing: target)
+        let finalPath = home.isEmpty ? name : home + "/" + name
+        let finalURL = folder.appendingPathComponent(finalPath)
+        do {
+            guard newURL.standardizedFileURL != oldURL.standardizedFileURL else { throw TBError("That is the same file.") }
+            guard fm.fileExists(atPath: newURL.path) else { throw TBError("“\(source.name)” isn't there any more.") }
+            if finalPath != targetPath, fm.fileExists(atPath: finalURL.path) { throw TBError("There is already an item named “\(name)” there.") }
+            let trashed = try trash(oldURL)
+            do {
+                if copy { try fm.copyItem(at: newURL, to: finalURL) } else { try fm.moveItem(at: newURL, to: finalURL) }
+            } catch {
+                // Nothing took the old version's place: put it back.
+                if let trashed { try? fm.moveItem(at: trashed, to: oldURL) }
+                throw error
+            }
+            var e = before
+            if let inside {
+                // Marks made on the new version come with it, except where the document already carries that mark.
+                e.signOffs.removeAll { s in s.path == inside && before.signOff(s.level, for: targetPath) != nil }
+                e.relink(after: [BinderRename(from: inside, to: finalPath)])
+            }
+            if finalPath != targetPath { e.relink(after: [BinderRename(from: targetPath, to: finalPath)]) }
+            let home = NSHomeDirectory()
+            commit(e, action: "Replace with New Version", notes: [
+                "“\(targetPath)” replaced by “\(inside ?? newURL.path.replacingOccurrences(of: home, with: "~"))”" + (finalPath != targetPath ? ", now “\(finalPath)”" : ""),
+                "The earlier version went to the Trash",
+            ])
+            let origin: URL? = copy ? nil : newURL
+            undoManager?.registerUndo(withTarget: self) { model in
+                model.undoReplaceVersion(final: finalURL, origin: origin, old: oldURL, trashed: trashed, state: before)
+            }
+            undoManager?.setActionName("Replace with New Version")
+            refreshBinder()
+            refreshLinks()
+            status = "“\(name)” is now the new version; the earlier one is in the Trash"
+            return true
+        } catch {
+            alert = AlertInfo(title: "The file wasn't replaced", message: error.localizedDescription + "\n\nIf the document is open in another app, close it there and try again.")
+            refreshBinder()
+            return false
+        }
+    }
+
+    private func undoReplaceVersion(final: URL, origin: URL?, old: URL, trashed: URL?, state: Engagement) {
+        let fm = FileManager.default
+        var notes: [String] = []
+        if let origin {
+            if !fm.fileExists(atPath: origin.path), (try? fm.moveItem(at: final, to: origin)) != nil { notes.append("The new version went back to where it came from") }
+        } else if (try? trash(final)) != nil {
+            notes.append("The copy of the new version went to the Trash")
+        }
+        if let trashed, !fm.fileExists(atPath: old.path), (try? fm.moveItem(at: trashed, to: old)) != nil { notes.append("The earlier version was put back") }
+        commit(state, action: "Undo: Replace with New Version", notes: notes.isEmpty ? ["Nothing could be put back; look in the Trash."] : notes)
+        refreshBinder()
+        refreshLinks()
+    }
+
+    /// The file takes the index of the file it was let go on, which stays in the folder with none.
+    @discardableResult
+    func takeIndex(_ source: PlaceholderArrival, of targetPath: String) -> Bool {
+        guard let tree = binder, let target = tree.item(targetPath) else { return false }
+        var path: String
+        switch source {
+        case .inside(let p): path = p
+        case .outside(let url):
+            guard addToBinder([url], folderPath: target.parentPath, start: nil, copy: UserDefaults.standard.bool(forKey: "binder.addCopies")) else { return false }
+            path = target.parentPath.isEmpty ? url.lastPathComponent : target.parentPath + "/" + url.lastPathComponent
+        }
+        guard let now = binder else { return false }
+        let renames = BinderIndexer.move(path, .onto(targetPath), in: now)
+        return renames.isEmpty ? true : applyBinderRenames(renames, actionName: "Move in Binder")
+    }
+
+    /// The file simply joins the folder of the file it was let go on, with the folder's next index.
+    @discardableResult
+    func addBeside(_ source: PlaceholderArrival, _ targetPath: String) -> Bool {
+        guard let tree = binder, let target = tree.item(targetPath) else { return false }
+        switch source {
+        case .inside(let p):
+            let renames = BinderIndexer.file(p, into: target.parentPath, in: tree)
+            return renames.isEmpty ? true : applyBinderRenames(renames, actionName: "Move in Binder")
+        case .outside(let url):
+            return addToBinder([url], folderPath: target.parentPath, start: BinderIndexer.nextFileIndex(in: target.parentPath, tree: tree),
+                               copy: UserDefaults.standard.bool(forKey: "binder.addCopies"))
+        }
+    }
+
+    /// Turns a document into a placeholder for itself: the file goes to the Trash and an empty
+    /// placeholder with the same index and name takes its place.
+    func turnIntoPlaceholder(_ path: String) {
+        guard let folder, let tree = binder, let item = tree.item(path), !item.isFolder, !item.isPlaceholder, let before = engagement else { return }
+        if !quiet {
+            let confirm = NSAlert()
+            confirm.alertStyle = .warning
+            confirm.messageText = "Turn “\(item.name)” into a placeholder?"
+            confirm.informativeText = "The file goes to the Trash, and an empty placeholder with the same index and name takes its place: “\(BinderPlaceholder.name(for: item.name))”. Journal entries that refer to the file will refer to the placeholder, and its sign-off marks come off.\n\nYou can put the file back from the Trash, or with ⌘Z."
+            confirm.addButton(withTitle: "Turn into Placeholder")
+            confirm.addButton(withTitle: "Cancel")
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        }
+        let name = BinderPlaceholder.name(for: item.name)
+        let to = item.parentPath.isEmpty ? name : item.parentPath + "/" + name
+        let fileURL = folder.appendingPathComponent(path), placeholderURL = folder.appendingPathComponent(to)
+        do {
+            guard !FileManager.default.fileExists(atPath: placeholderURL.path) else { throw TBError("There is already an item named “\(name)” there.") }
+            let trashed = try trash(fileURL)
+            do {
+                try Data("Placeholder made in TB Tool on \(Timestamp.dayString(Date())), in place of “\(item.name)”, which went to the Trash.\n".utf8).write(to: placeholderURL, options: .atomic)
+            } catch {
+                if let trashed { try? FileManager.default.moveItem(at: trashed, to: fileURL) }
+                throw error
+            }
+            var e = before
+            e.relink(after: [BinderRename(from: path, to: to)])
+            e.signOffs.removeAll { $0.path == to }
+            commit(e, action: "Turn into Placeholder", notes: ["“\(path)” moved to the Trash", "Made “\(to)” in its place"])
+            undoManager?.registerUndo(withTarget: self) { model in
+                var notes: [String] = []
+                if (try? FileManager.default.removeItem(at: placeholderURL)) != nil { notes.append("The placeholder was removed") }
+                if let trashed, !FileManager.default.fileExists(atPath: fileURL.path), (try? FileManager.default.moveItem(at: trashed, to: fileURL)) != nil { notes.append("“\(path)” was put back") }
+                model.commit(before, action: "Undo: Turn into Placeholder", notes: notes)
+                model.refreshBinder()
+                model.refreshLinks()
+            }
+            undoManager?.setActionName("Turn into Placeholder")
+            refreshBinder()
+            refreshLinks()
+            status = "“\(item.displayTitle)” is now a placeholder; the file is in the Trash"
+        } catch {
+            alert = AlertInfo(title: "It wasn't turned into a placeholder", message: error.localizedDescription)
+            refreshBinder()
+        }
     }
 
     /// Lays the folders of the binder layout out in this binder (existing folders are left

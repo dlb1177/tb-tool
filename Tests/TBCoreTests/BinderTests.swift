@@ -439,6 +439,56 @@ final class BinderTests: XCTestCase {
         XCTAssertEqual(names("4000 Client Support"), ["4000.01 Organizer.pdf", "Bank statement.pdf"])
     }
 
+    func testRenamingKeepsTheExtension() throws {
+        try make("4000 Support/4000.01 (PLACEHOLDER) K-1.pdf.txt")
+        try make("4000 Support/Statement 12.31")
+        try make("4000 Support/archive.tar.gz")
+        try make("4000 Support/4000.09 Notes")
+        let tree = try sampleBinder()
+        func parts(_ path: String) -> [String] { let p = BinderIndexer.nameParts(of: tree.item(path)!); return [p.stem, p.ext] }
+        // What can be typed over, and what stays.
+        XCTAssertEqual(parts("2000 Client Financials/2000.02 GL.xlsx"), ["GL", ".xlsx"])
+        XCTAssertEqual(parts("4000 Support"), ["Support", ""])
+        XCTAssertEqual(parts("4000 Support/archive.tar.gz"), ["archive.tar", ".gz"])
+        XCTAssertEqual(parts("4000 Support/4000.09 Notes"), ["Notes", ""])
+        // "12.31" is part of a name, not an extension.
+        XCTAssertEqual(parts("4000 Support/Statement 12.31"), ["Statement 12.31", ""])
+        // A placeholder is named for its document.
+        XCTAssertEqual(parts("4000 Support/4000.01 (PLACEHOLDER) K-1.pdf.txt"), ["K-1", ".pdf"])
+
+        func renamed(_ path: String, _ typed: String) -> String? { BinderIndexer.retitle(path, to: typed, in: tree).first?.to }
+        let gl = "2000 Client Financials/2000.02 GL.xlsx"
+        // Only the name changes: the index stays in front and the extension behind, so a file can't lose its type.
+        XCTAssertEqual(renamed(gl, "General ledger"), "2000 Client Financials/2000.02 General ledger.xlsx")
+        XCTAssertEqual(renamed(gl, "General ledger.xlsx"), "2000 Client Financials/2000.02 General ledger.xlsx")
+        XCTAssertEqual(renamed(gl, "General ledger.XLSX"), "2000 Client Financials/2000.02 General ledger.xlsx")
+        XCTAssertEqual(renamed(gl, "Ledger v2.1"), "2000 Client Financials/2000.02 Ledger v2.1.xlsx")
+        XCTAssertEqual(renamed(gl, "Report.pdf"), "2000 Client Financials/2000.02 Report.pdf.xlsx")
+        XCTAssertNil(renamed(gl, "GL"))
+        XCTAssertNil(renamed(gl, ""))
+        XCTAssertNil(renamed(gl, ".xlsx"))
+        XCTAssertNil(renamed(gl, ".hidden"))
+        XCTAssertNil(renamed(gl, "a/b"))
+        XCTAssertEqual(renamed("4000 Support/4000.01 (PLACEHOLDER) K-1.pdf.txt", "K-1 Lakeside"), "4000 Support/4000.01 (PLACEHOLDER) K-1 Lakeside.pdf.txt")
+        XCTAssertEqual(renamed("4000 Support/4000.09 Notes", "Call notes"), "4000 Support/4000.09 Call notes")
+    }
+
+    func testMovingSeveralFilesIntoAFolder() throws {
+        let tree = try dragBinder()
+        let picked: Set<String> = ["2000 Client Financials/2000.01 TB.xlsx", "2000 Client Financials/2000.02 GL.xlsx", "4000 Support/Loose.pdf",
+                                   "4000 Support/4000.01 A.pdf", "5000 Permanent Files"]
+        // Each takes the folder's next index, in the order listed. Files already there, and folders, are left.
+        XCTAssertEqual(pairs(BinderIndexer.file(picked, into: "4000 Support", in: tree)),
+                       ["2000.01 TB.xlsx > 4000 Support/4000.06 TB.xlsx", "2000.02 GL.xlsx > 4000 Support/4000.07 GL.xlsx"])
+        XCTAssertEqual(pairs(BinderIndexer.file(picked, into: "5000 Permanent Files", in: tree)),
+                       ["2000.01 TB.xlsx > 5000 Permanent Files/5000.01 TB.xlsx", "2000.02 GL.xlsx > 5000 Permanent Files/5000.02 GL.xlsx",
+                        "4000.01 A.pdf > 5000 Permanent Files/5000.03 A.pdf", "Loose.pdf > 5000 Permanent Files/5000.04 Loose.pdf"])
+        XCTAssertEqual(BinderIndexer.file(picked, into: "Nowhere", in: tree), [])
+        try BinderFileOps.apply(BinderIndexer.file(picked, into: "5000 Permanent Files", in: tree), root: root)
+        XCTAssertEqual(names("5000 Permanent Files"), ["5000.01 TB.xlsx", "5000.02 GL.xlsx", "5000.03 A.pdf", "5000.04 Loose.pdf"])
+        XCTAssertEqual(names("2000 Client Financials"), [])
+    }
+
     func testPlacingNewFilesInAFolder() throws {
         let tree = try dragBinder()
         let next = try XCTUnwrap(BinderIndexer.nextFileIndex(in: "4000 Support", tree: tree))

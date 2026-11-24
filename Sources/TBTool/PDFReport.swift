@@ -41,6 +41,12 @@ enum PDFReport {
         return out as Data
     }
 
+    /// A colour from the six hex digits the report bands are given in.
+    private static func color(_ hex: String) -> NSColor {
+        let v = UInt32(hex, radix: 16) ?? 0
+        return NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
+
     private static func text(_ cell: ReportCell) -> String {
         switch cell {
         case .empty: return ""
@@ -263,14 +269,18 @@ enum PDFReport {
                 draw(line, Layout.font(size + 1, bold: true), in: CGRect(x: left, y: y, width: paper.width - 2 * left, height: ceil((size + 1) * 1.4)))
                 y += ceil((size + 1) * 1.4) + 6
             }
-            // Column titles, on every page.
+            // Column titles, on every page, on a dark band.
             let bold = Layout.font(size, bold: true)
+            PDFReport.color(ReportBand.columns.hex).setFill()
+            CGRect(x: left, y: y - 2, width: right - left, height: lineHeight + 6).fill()
             for (i, c) in table.columns.enumerated() {
-                draw(c.title, bold, in: CGRect(x: lefts[i] + Layout.pad, y: y, width: widths[i] - 2 * Layout.pad, height: lineHeight), right: c.kind == .money)
+                draw(c.title, bold, in: CGRect(x: lefts[i] + Layout.pad, y: y + 0.5, width: widths[i] - 2 * Layout.pad, height: lineHeight), right: c.kind == .money, color: .white)
             }
-            y += lineHeight + 3
-            rule(y, from: left, to: right, 0.15, 0.9)
-            y += 5
+            y += lineHeight + 8
+
+            // A long list of plain rows is easier to read across with every other one tinted.
+            let striped = !table.rows.contains { $0.block != nil }
+            var stripe = false
 
             for r in pages[page] {
                 let row = table.rows[r]
@@ -280,18 +290,32 @@ enum PDFReport {
                 let f = Layout.font(for: row.style, size)
                 let span = Layout.spanning(row)
                 var top = y + 2
+                // The band the row sits on: a section, a grouping, an entry's heading, a total.
+                let band = ReportBand(row)
+                if band != .none {
+                    PDFReport.color(band.hex).setFill()
+                    CGRect(x: left, y: y, width: right - left, height: h - (row.style == .heading || row.style == .section ? 1 : 0)).fill()
+                    stripe = false
+                } else if row.style == .normal, striped {
+                    if stripe {
+                        NSColor(white: 0.965, alpha: 1).setFill()
+                        CGRect(x: left, y: y, width: right - left, height: h).fill()
+                    }
+                    stripe.toggle()
+                }
                 switch row.style {
                 case .heading:
-                    NSColor(white: 0.93, alpha: 1).setFill()
-                    CGRect(x: left, y: y, width: right - left, height: h - 1).fill()
                     rule(y, from: left, to: right, 0.55)
                     top = y + 3.5
                 case .section:
                     top = y + 4
-                case .subtotal, .total:
+                case .total:
+                    rule(y, from: left, to: right, 0.1, 0.9)
+                    rule(y + h - 1.6, from: left, to: right, 0.1, 0.5)
+                case .subtotal where band == .none:
                     // A line over the figures being totalled.
                     for (i, cell) in row.cells.enumerated() where i < table.columns.count {
-                        if case .money = cell { rule(y, from: lefts[i] + 2, to: lefts[i] + widths[i] - 2, row.style == .total ? 0.1 : 0.45, row.style == .total ? 0.9 : 0.6) }
+                        if case .money = cell { rule(y, from: lefts[i] + 2, to: lefts[i] + widths[i] - 2, 0.45) }
                     }
                 default: break
                 }
@@ -301,7 +325,7 @@ enum PDFReport {
                     let money: Bool = { if case .money = cell { return true }; return false }()
                     let width = (i == span ? right - lefts[i] : widths[i]) - 2 * Layout.pad
                     draw(s, f, in: CGRect(x: lefts[i] + Layout.pad, y: top, width: width, height: h - 2), right: money,
-                         color: row.style == .note ? NSColor(white: 0.3, alpha: 1) : .black, wrap: !money)
+                         color: row.style == .note ? NSColor(white: 0.3, alpha: 1) : (row.style == .section ? PDFReport.color(ReportBand.ink) : .black), wrap: !money)
                 }
             }
 

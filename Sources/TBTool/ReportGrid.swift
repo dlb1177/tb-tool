@@ -176,6 +176,8 @@ struct DataGrid: NSViewRepresentable {
     var selected: Set<String>? = nil
     var onSelect: ((Set<String>) -> Void)? = nil
     var menu: ((Set<String>) -> NSMenu?)? = nil
+    /// The file a row stands for, if rows can be dragged out to Finder or another app.
+    var dragURL: ((String) -> URL?)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -199,6 +201,10 @@ struct DataGrid: NSViewRepresentable {
         tv.doubleAction = #selector(Coordinator.doubleClicked(_:))
         tv.copyHandler = { [weak coordinator = context.coordinator] in coordinator?.copySelection() }
         tv.menuProvider = { [weak coordinator = context.coordinator] in coordinator?.rowMenu() }
+        tv.hoverHandler = { [weak coordinator = context.coordinator] point in coordinator?.hover(point) }
+        // Rows that stand for files can be dragged out, several at once; what receives them gets copies.
+        tv.setDraggingSourceOperationMask(.copy, forLocal: false)
+        tv.setDraggingSourceOperationMask([], forLocal: true)
 
         let rowMenu = NSMenu()
         rowMenu.addItem(withTitle: "Copy", action: #selector(GridTableView.copy(_:)), keyEquivalent: "c")
@@ -267,7 +273,50 @@ struct DataGrid: NSViewRepresentable {
             return make(selectedIDs(tv))
         }
 
+        // MARK: The total of the selected rows, shown while the pointer rests on them
+
+        private let totals = SelectionTotals()
+
+        /// What the selected rows add up to, column by column. Accounts are added if any are
+        /// selected; otherwise the grouping lines that are, leaving out a subgroup whose grouping
+        /// is selected too (its amounts are already inside it).
+        func selectionTotals() -> (count: Int, lines: [(String, Money)])? {
+            guard let tv = tableView, tv.selectedRowIndexes.count >= 2 else { return nil }
+            let picked = tv.selectedRowIndexes.filter { $0 < rows.count }.map { rows[$0] }
+            let ids = Set(picked.map(\.id))
+            var counted = picked.filter { $0.style == .normal && ($0.parentRowID.map { !ids.contains($0) } ?? true) }
+            if counted.isEmpty {
+                counted = picked.filter { ($0.style == .subtotal || $0.style == .total) && ($0.parentRowID.map { !ids.contains($0) } ?? true) }
+            }
+            guard counted.count >= 2 else { return nil }
+            var lines: [(String, Money)] = []
+            for col in tv.tableColumns where !col.isHidden {
+                guard let i = identifiers.firstIndex(of: col.identifier.rawValue), columns[i].kind == .money else { continue }
+                var sum = Money.zero
+                for row in counted where i < row.cells.count {
+                    if case .money(let m) = row.cells[i] { sum += m }
+                }
+                lines.append((columns[i].title, sum))
+            }
+            return lines.isEmpty ? nil : (counted.count, lines)
+        }
+
+        /// The pointer moved over the table (`point`, in the window), or left it (nil).
+        func hover(_ point: NSPoint?) {
+            guard let tv = tableView, let point, let window = tv.window else {
+                totals.hide()
+                return
+            }
+            let row = tv.row(at: tv.convert(point, from: nil))
+            guard row >= 0, tv.selectedRowIndexes.contains(row), let sums = selectionTotals() else {
+                totals.hide()
+                return
+            }
+            totals.show(count: sums.count, lines: sums.lines, at: window.convertPoint(toScreen: point), in: window)
+        }
+
         func tableViewSelectionDidChange(_ notification: Notification) {
+            if (tableView?.selectedRowIndexes.count ?? 0) < 2 { totals.hide() }
             guard !syncingSelection, let tv = tableView, let onSelect = parent.onSelect else { return }
             let ids = selectedIDs(tv)
             DispatchQueue.main.async { onSelect(ids) }
@@ -281,7 +330,10 @@ struct DataGrid: NSViewRepresentable {
             syncingSelection = false
         }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+            totals.hide()
+        }
 
         func apply() {
             guard let tv = tableView else { return }
@@ -410,11 +462,19 @@ struct DataGrid: NSViewRepresentable {
             return fitWidth(i, title: col)
         }
 
-        @objc func scrolled(_ notification: Notification) { footer?.needsDisplay = true }
+        @objc func scrolled(_ notification: Notification) {
+            footer?.needsDisplay = true
+            totals.hide()
+        }
 
         // MARK: Data
 
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+        func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+            guard row < rows.count, let url = parent.dragURL?(rows[row].id) else { return nil }
+            return url as NSURL
+        }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             guard let tableColumn, let ci = identifiers.firstIndex(of: tableColumn.identifier.rawValue), row < rows.count else { return nil }
@@ -699,6 +759,34 @@ final class GridFooterView: NSView {
 final class GridTableView: NSTableView {
     var copyHandler: (() -> Void)?
     var menuProvider: (() -> NSMenu?)?
+    /// Told where the pointer is as it moves over the table, and nil when it leaves.
+    var hoverHandler: ((NSPoint?) -> Void)?
+    private var tracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        hoverHandler?(event.locationInWindow)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        hoverHandler?(nil)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        hoverHandler?(nil)
+        super.mouseDown(with: event)
+        // The click may have finished a selection: show its total without waiting for the pointer to move.
+        if let window, window.isKeyWindow { hoverHandler?(window.mouseLocationOutsideOfEventStream) }
+    }
 
     @objc func copy(_ sender: Any?) { copyHandler?() }
 
@@ -710,6 +798,94 @@ final class GridTableView: NSTableView {
             if let custom = menuProvider?() { return custom }
         }
         return super.menu(for: event)
+    }
+}
+
+/// The small panel that follows the pointer over a selection of rows and shows what they add
+/// up to in each column.
+final class SelectionTotals {
+    private var panel: NSPanel?
+    private let view = TotalsView()
+
+    func show(count: Int, lines: [(String, Money)], at screenPoint: NSPoint, in parent: NSWindow) {
+        view.set(title: "\(count) rows selected", lines: lines)
+        let size = view.fittingSize
+        let panel = self.panel ?? {
+            let p = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+            p.isFloatingPanel = true
+            p.level = .popUpMenu
+            p.hasShadow = true
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.ignoresMouseEvents = true
+            p.hidesOnDeactivate = true
+            p.contentView = view
+            self.panel = p
+            return p
+        }()
+        // Below and to the right of the pointer, kept on the screen.
+        var origin = NSPoint(x: screenPoint.x + 16, y: screenPoint.y - size.height - 14)
+        if let visible = (parent.screen ?? NSScreen.main)?.visibleFrame {
+            if origin.x + size.width > visible.maxX - 6 { origin.x = screenPoint.x - size.width - 12 }
+            if origin.y < visible.minY + 6 { origin.y = screenPoint.y + 16 }
+        }
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        if !panel.isVisible { panel.orderFront(nil) }
+    }
+
+    func hide() {
+        panel?.orderOut(nil)
+    }
+
+    private final class TotalsView: NSView {
+        private var title = ""
+        private var lines: [(String, Money)] = []
+        private let titleFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        private let labelFont = NSFont.systemFont(ofSize: 12)
+        private let amountFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        private let rowHeight: CGFloat = 18, pad: CGFloat = 10, gap: CGFloat = 18
+
+        override var isFlipped: Bool { true }
+
+        func set(title: String, lines: [(String, Money)]) {
+            self.title = title
+            self.lines = lines
+            needsDisplay = true
+        }
+
+        private func text(_ m: Money) -> String { m.isZero ? "–" : m.formatted }
+
+        private var widths: (label: CGFloat, amount: CGFloat) {
+            let label = lines.map { ($0.0 as NSString).size(withAttributes: [.font: labelFont]).width }.max() ?? 0
+            let amount = lines.map { (text($0.1) as NSString).size(withAttributes: [.font: amountFont]).width }.max() ?? 0
+            return (ceil(label), ceil(amount) + 6)
+        }
+
+        override var fittingSize: NSSize {
+            let w = widths
+            let titleWidth = ceil((title as NSString).size(withAttributes: [.font: titleFont]).width)
+            return NSSize(width: max(w.label + gap + w.amount, titleWidth) + 2 * pad, height: 2 * pad + 18 + CGFloat(lines.count) * rowHeight)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let box = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+            NSColor.windowBackgroundColor.setFill()
+            box.fill()
+            NSColor.separatorColor.setStroke()
+            box.stroke()
+            (title as NSString).draw(at: NSPoint(x: pad, y: pad - 1), withAttributes: [.font: titleFont, .foregroundColor: NSColor.secondaryLabelColor])
+            let w = widths
+            for (n, line) in lines.enumerated() {
+                let y = pad + 18 + CGFloat(n) * rowHeight
+                (line.0 as NSString).draw(at: NSPoint(x: pad, y: y), withAttributes: [.font: labelFont, .foregroundColor: NSColor.labelColor])
+                let amount = text(line.1)
+                let size = (amount as NSString).size(withAttributes: [.font: amountFont])
+                // Debits sit a little in from the edge so their last digit lines up with a credit's, inside its bracket.
+                let x = bounds.width - pad - size.width - (line.1.cents >= 0 ? 4.5 : 0)
+                (amount as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: [.font: amountFont, .foregroundColor: line.1.isZero ? NSColor.secondaryLabelColor : NSColor.labelColor])
+            }
+            _ = w
+        }
     }
 }
 

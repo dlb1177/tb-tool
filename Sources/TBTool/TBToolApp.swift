@@ -20,6 +20,10 @@ struct TBToolApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Trial Balance File…") { model.newFilePanel() }
                     .keyboardShortcut("n")
+                Button("New Window") { model.openInNewWindow(nil) }
+                    .keyboardShortcut("n", modifiers: [.command, .option])
+                Button("Open in New Window…") { model.openPanel(newWindow: true) }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
                 Button("Open…") { model.openPanel() }
                     .keyboardShortcut("o")
                 Button("Close File") { model.closeFile() }
@@ -130,8 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Double-clicking a trial balance file, or dropping it on the app icon.
+    // With a trial balance already open, another one opens beside it in a window of its own.
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let url = urls.first { AppModel.shared.open(url) }
+        let model = AppModel.shared
+        for (n, url) in urls.enumerated() {
+            if url.standardizedFileURL == model.fileURL?.standardizedFileURL { continue }
+            if model.engagement == nil && n == 0 { model.open(url) } else { model.openInNewWindow(url) }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -130,6 +130,20 @@ Anyway**.
 
 You can also drop a trial balance file on the app's icon, or use File ▸ Open (⌘O).
 
+**More than one trial balance at once.** Each trial balance can have a window of its own:
+
+- File ▸ **Open in New Window…** (⇧⌘O) opens another trial balance beside the one you have.
+- File ▸ **New Window** (⌥⌘N) opens another window at the welcome screen.
+- Double-clicking a trial balance file in Finder, or dropping it on the app's icon, while one is
+  already open, opens it in a new window rather than replacing the one you are working in.
+
+Each window is its own copy of the app: it appears as another TB Tool in the Dock and in the
+⌘-Tab switcher, with the client's name as its window title. Each has its own undo, its own
+journal entry windows and its own change log, so nothing done in one can disturb another.
+File ▸ Open… (⌘O) still replaces the file in the window you are in. Opening the *same* file in
+two windows is not prevented, and is not a good idea: each saves over the other, though the
+version replaced is kept in `TB Backups` and each window reloads when it sees the file change.
+
 **The main window.** A sidebar on the left; the selected screen on the right; a status line at
 the bottom showing the last thing that happened and the path of the open file (click it to show
 the file in Finder).
@@ -478,6 +492,17 @@ Every trial balance, consolidation, report, activity and grouping grid behaves t
   to resize, double-click an edge to fit that column, drag a heading to reorder. Right-click a
   heading to hide or show columns, **Fit Column Widths to Content**, or **Reset Column Order**.
   What you change is remembered per screen, through switching screens and quitting.
+- **The total of a selection.** Select two or more rows (⇧-click for a run, ⌘-click to add or
+  remove one) and rest the pointer on them: a small panel shows what the selected rows add up
+  to **in every amount column**, with the number of rows. Move the pointer off the selection,
+  or click elsewhere, and it goes. It works on every grid: a trial balance, the consolidation,
+  the reports, account activity and a grouping's accounts.
+
+  ![The total of the selected rows](images/selection-total.png)
+
+  If accounts are selected, they are what is added, even if a grouping line is selected with
+  them. If only grouping lines are selected, those are added, and a subgroup is left out when
+  its own grouping is selected too, so nothing is counted twice.
 - **Copy**: select rows and press ⌘C to copy them, with headings, ready to paste into a
   spreadsheet. With nothing selected, ⌘C copies everything including the totals.
 - **Hide zero rows** is one switch for the whole app. It appears on every trial balance and
@@ -991,7 +1016,19 @@ right-click ▸ Change Index…). The files inside that carry its number are ren
 making `5020 Entity Formation Documents` 5040 turns `5020.01 …` into `5040.01 …`. If another
 folder has the number you can insert before it or take its place, as with files.
 
-**Rename…** (right-click) changes the name of a file or folder and leaves its index in front.
+### Renaming
+
+Select a file or folder and press **Return**, as in Finder. Its name becomes a field in its
+row: type the new name and press Return again to save it, or Esc to leave it as it was.
+Clicking elsewhere also saves. (Right-click ▸ **Rename** does the same.)
+
+![Renaming in place](images/binder-rename.png)
+
+**Only the name is offered for changing.** The index stays in front and **the extension stays
+behind** — it is shown after the field, not in it — so a file cannot lose its type by being
+renamed. If you type the extension anyway it is not doubled. To change an index, use Set
+Index…; to change a file's type, save it as that type from its own app. In the All Files view,
+Return (or right-click ▸ Rename…) asks for the name in a small dialog instead.
 
 ### The standard folders, in this binder or another folder
 
@@ -1013,6 +1050,12 @@ leaves them ([section 12](#12-prior-years-and-rolling-forward)), and you can mak
 folder's next one (change it, or empty it for none). The file made is
 `4000.05 (PLACEHOLDER) Bank statement - December.pdf.txt`.
 
+**To turn a document back into a placeholder** (it was the wrong one, or last year's, and the
+real one is still to come), right-click it ▸ **Turn into Placeholder…**. You are asked to
+confirm, because the file goes to the Trash; an empty placeholder with the same index and name
+takes its place. Journal entries that referred to the file refer to the placeholder, and its
+sign-off marks come off. ⌘Z puts the file back.
+
 **When the document arrives, drop it on its placeholder**, from Finder or from elsewhere in
 the binder. Either way the same question is asked:
 
@@ -1023,6 +1066,29 @@ the binder. Either way the same question is asked:
   the document.
 - **Add it as a new file, with no index**: the document is put in the folder and the
   placeholder stays.
+
+### A file dropped on another file: a new version, or its index
+
+Let a file go **on** another file — from Finder, or from elsewhere in the binder — and you are
+asked which of three things you mean:
+
+![A file let go on another file](images/binder-on-file.png)
+
+- **Replace it with this version.** The new file takes the old one's **name and index**
+  exactly, and the old version goes to the Trash. This is for an updated copy of a document
+  you already have. Journal entries keep referring to it. Its sign-off marks stay but turn
+  orange, *changed since sign-off*, because it is no longer the file that was signed: click a
+  mark to sign the new version. If the new file is of a different type (a `.pdf` replaced by
+  an `.xlsx`), the name keeps everything but takes the new extension. Close the old document
+  in other apps first; if it cannot be moved, nothing is changed and a message says so.
+- **Take its index.** The file becomes that number, and the file that had it stays in the
+  folder with no index.
+- **Add it to this folder as a file of its own**, with the folder's next index. (Not offered
+  when the file is already in that folder.)
+
+A file from Finder starts on the third choice; a file from the binder starts on the second.
+Nothing happens until you click the button, and ⌘Z undoes whichever you choose, putting the
+replaced version back from the Trash.
 
 ### Bringing files in from Finder
 
@@ -1074,10 +1140,21 @@ are shown the renames and asked first:**
 | **Between two files with a free number between them** | The file takes the first free number there. Nothing else is renamed, and nothing is asked. |
 | **Above or below a file in the same folder**, with no free number there | The file goes there, and the files between its old place and its new one are renumbered. The folder keeps the same run of numbers. You confirm. |
 | **Above or below a file in another folder** (or dragging a file that has no index), with no free number there | The file moves to that folder and takes the number at that spot. The file that had it, and any that follow it without a gap, move up by one. You confirm. |
-| **On a file** | The dragged file takes that file's index and place. The other file stays in the folder and **becomes unindexed**. You confirm. |
 | **On a placeholder** | You are asked whether it replaces the placeholder (above). |
 | **On a folder** | The file is filed in that folder with the folder's next index. Nothing is asked. |
 | **Beside a file with no index** | There is no number to take, so the file gets the folder's next index. |
+
+| **On a file** | You are asked whether it is a new version of that file, takes its index, or joins the folder (above). |
+
+**Several files at once.** Select them (⌘-click, ⇧-click) and drag any one of them: all of
+them go.
+
+- **Onto a folder, or onto a file in a folder**: they all move into that folder, each taking
+  its next index in the order they are listed. Nothing is asked, and ⌘Z moves them back.
+- **Out of the binder**, to a Finder window, the Desktop, an email or another app: all of them
+  are handed over. What receives them gets **copies**; the binder keeps its files, so nothing
+  an entry refers to goes missing. (The same is true of one file dragged out, and of rows
+  dragged out of the All Files view.)
 
 No two files ever end up with the same index. Folders are not dragged; change a folder's
 number with Set Index…. Every one of these can be undone with ⌘Z.
@@ -1340,6 +1417,15 @@ Like the other balance screens, the reports include an entry that is being typed
   ended December 31, 2026", then client number, tax ID, entity type and engagement, then firm,
   prepared by and reviewed by.
 - Real numeric cells, formatted with brackets for credits; bold totals.
+- **Shaded bands set the rows apart**, the same in Excel and PDF: the column titles are white
+  on dark blue; a **section** ("Sch. L Accounts") is a blue band; in the grouping detail and a
+  trial balance by grouping, each **grouping** that heads its accounts is a light blue band,
+  with its subgroups a shade lighter; a journal entry's heading is grey; a **grand total** is a
+  grey band ruled above and double-ruled below. Subtotals inside a section are bold with a
+  rule over them. The long-format Data sheet is left plain, since it is data for another
+  program.
+
+  ![A report exported with shaded groupings](images/export-shading.png)
 - The heading and column titles are frozen and repeat on every printed page; pages are
   landscape and fit to width, with the sheet name and page number in the footer.
 - The **Data** sheet has no heading: one header row and one record per row, so it pivots.
@@ -1357,7 +1443,9 @@ Like the other balance screens, the reports include an entry that is being typed
   references, its lines and its total — is always on one page (unless one entry is longer than
   a page). A heading is never left at the foot of a page without what follows it, and a total
   is never carried over alone.
-- Credits are in brackets, zero is a dash, and totals are ruled above.
+- Credits are in brackets, zero is a dash, and totals are ruled above. The bands are those of
+  the Excel export; in a plain list of accounts every other row is lightly tinted, to follow a
+  wide row across the page.
 
 CSV exports of a report carry the same heading lines above the columns. A JSON export holds
 the report's title and heading and a `rows` array of records keyed by column title, without
@@ -1675,7 +1763,9 @@ name, login and Mac of whoever ran it and what the command changed.
 | Item | Shortcut | |
 |---|---|---|
 | New Trial Balance File… | ⌘N | |
-| Open… | ⌘O | |
+| New Window | ⌥⌘N | Another window, at the welcome screen. |
+| Open in New Window… | ⇧⌘O | Another trial balance, beside the one that is open. |
+| Open… | ⌘O | Replaces the file in this window. |
 | Close File | | Returns to the welcome screen. |
 | Trial Balance Settings… | ⇧⌘, | Client, year and binder details of the open file. |
 | Roll Forward to Next Year… | | |
@@ -1714,8 +1804,8 @@ through the binder's indexed files, Return or Tab to add the highlighted one, Es
 
 **On the Binder screen:** Space previews the selected file and closes the preview; ↑ ↓ move
 through the list (⇧↑ ⇧↓ extend the selection); ← closes a folder (or goes to the folder a file
-is in); → opens a folder; **⌘O** opens what is selected; **⌘⌫** moves it to the Trash; ⌘A
-selects everything; ⌘-click and ⇧-click select several. ⌘O and ⌘⌫ act on the binder only when
+is in); → opens a folder; **Return** renames what is selected, in its row; **⌘O** opens what is selected; **⌘⌫** moves it
+to the Trash; ⌘A selects everything; ⌘-click and ⇧-click select several. ⌘O and ⌘⌫ act on the binder only when
 something in it is selected.
 
 **Toolbar:** New Entry (menu of the four types), Import (click to import files; the arrow
@@ -1821,6 +1911,12 @@ or the Accounts screen's Chart menu.
 
 **A linked file shows as missing.** Fix Links… on the Journal Entries screen. Or open the
 entry, remove the reference, and pick the file again from the binder's list.
+
+**I renamed a file and its extension is still there.** That is deliberate: renaming changes
+only the name, so a file can't be left without its type.
+
+**There are two TB Tools in the Dock.** Each trial balance window is its own copy of the app.
+Quit one with ⌘Q and the others stay open.
 
 **Control-click doesn't add to the selection.** On the Mac, Control-click is a right-click.
 Use ⌘-click to add or remove one item and ⇧-click to select a run.

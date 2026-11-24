@@ -302,4 +302,43 @@ final class AuditTests: XCTestCase {
         // No entries at all still makes a report.
         XCTAssertEqual(Reports(try sample()).journalReport().rows.map(\.style), [.note])
     }
+
+    func testExportsShadeSectionsGroupingsAndTotals() throws {
+        var e = try sample()
+        e.applyGroupingMap(csv: try String(contentsOf: TBCoreTests.root.appendingPathComponent("grouping-map.csv"), encoding: .utf8))
+        let detail = Reports(e).groupingSummary(basis: .book, detail: true)
+        func band(_ id: String) -> ReportBand { ReportBand(detail.rows.first { $0.id == id }!) }
+        // A section, a grouping that heads its accounts, an account, a grand total.
+        let section = try XCTUnwrap(detail.rows.first { $0.style == .section })
+        XCTAssertEqual(ReportBand(section), .section)
+        let group = try XCTUnwrap(detail.rows.first { $0.groupingID != nil && $0.style == .subtotal && $0.parentRowID == nil })
+        XCTAssertEqual(ReportBand(group), .group)
+        XCTAssertEqual(ReportBand(try XCTUnwrap(detail.rows.first { $0.accountID != nil })), .none)
+        XCTAssertEqual(band("total"), .total)
+        // A section's own total is a ruled line, not a band; a subgroup is a shade lighter than its grouping.
+        XCTAssertEqual(ReportBand(try XCTUnwrap(detail.rows.first { $0.id.hasPrefix("st:") })), .none)
+        var sub = group
+        sub.parentRowID = group.id
+        XCTAssertEqual(ReportBand(sub), .subgroup)
+        XCTAssertEqual(Set(ReportBand.allCases.map(\.hex)).count, ReportBand.allCases.count)
+
+        // The workbook is still a valid one, and its style sheet lists exactly the styles the sheets use.
+        let data = Exporter.xlsx(Reports(e).workbook())
+        let zip = try ZipReader(data)
+        let styles = String(decoding: try XCTUnwrap(zip.entry("xl/styles.xml")), as: UTF8.self)
+        for band in ReportBand.allCases.dropFirst() { XCTAssertTrue(styles.contains("FF\(band.hex)"), band.hex) }
+        let declared = Int(try XCTUnwrap(styles.range(of: #"cellXfs count="(\d+)""#, options: .regularExpression).map { styles[$0].filter(\.isNumber) }))!
+        XCTAssertEqual(styles.components(separatedBy: "<xf numFmtId").count - 2, declared)   // one more belongs to cellStyleXfs
+        var highest = 0
+        for n in 1...20 {
+            guard let sheet = zip.entry("xl/worksheets/sheet\(n).xml") else { break }
+            let xml = String(decoding: sheet, as: UTF8.self)
+            for part in xml.components(separatedBy: " s=\"").dropFirst() { highest = max(highest, Int(part.prefix { $0.isNumber }) ?? 0) }
+        }
+        XCTAssertEqual(highest, declared - 1)
+        // It reads back as the same figures.
+        let sheets = try XLSXReader.read(data, name: "workbook.xlsx")
+        XCTAssertEqual(sheets.first?.name, "Consolidated")
+        XCTAssertTrue(sheets.contains { $0.name == "Grouping Detail" && $0.rows.contains { $0.contains("Total (zero when in balance)") } })
+    }
 }

@@ -17,7 +17,10 @@ the client's folder**. No server, no account, no database.
   anything comes in. Account numbers are optional. When a file names an account differently
   from the chart, a review lets you settle the name and the grouping, with a preview.
 - **Keeps several trial balances on one chart of accounts** (properties, companies, funds) and
-  consolidates them in columns, with eliminations.
+  consolidates them in columns, with eliminations. Several clients' files can be open at once,
+  each in its own window.
+- **Totals a selection as you hover**: select rows in any grid, rest the pointer on them, and
+  see what they add up to in every column.
 - **Four kinds of journal entry**: adjusting (AJE), reclassifying (RJE), tax-only (TJE) and
   eliminating (EJE). Each lands in its own column: Unadjusted → AJE → Adjusted → RJE → Final
   (Book) → TJE → Tax Basis.
@@ -35,8 +38,9 @@ the client's folder**. No server, no account, no database.
 - **Manages the binder**: the client's folder for the year, with numbered folders and indexed
   workpapers, without going to Finder. Drop files in; drag a file to move or renumber it (onto
   a free number it just lands, otherwise every rename is shown for confirmation first); select
-  several to index, open or delete; make folders, subfolders and placeholders; press Space to
-  preview. See it as folders or as one flat, sortable list, and search or filter by sign-off.
+  several to index, open, move or delete; drop a new version onto a document to replace it
+  under the same name and index; make folders, subfolders and placeholders; press Return to
+  rename in place (the extension is never touched) and Space to preview. See it as folders or as one flat, sortable list, and search or filter by sign-off.
   No two items ever share an index, and a new binder starts with your standard folders.
 - **Rolls the binder forward** with the trial balance, copying each file, leaving a
   placeholder, or leaving it behind.
@@ -45,7 +49,8 @@ the client's folder**. No server, no account, no database.
   changed afterwards shows. Every change to the file is written to a change log that makes
   later tampering evident.
 - **Exports** to Excel (a formatted workbook with binder headings), PDF (numbered pages, column
-  titles on every page, no journal entry split across pages), CSV and JSON. The journal goes
+  titles on every page, no journal entry split across pages), CSV and JSON, with sections,
+  groupings and totals set apart by shaded bands. The journal goes
   out the way a client expects to read it: each entry on its own, under a heading for its kind.
 - Reads and writes a plain, documented file format that scripts and AI assistants can work
   with directly. Light and dark appearance, or automatic.

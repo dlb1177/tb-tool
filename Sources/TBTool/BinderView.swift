@@ -36,7 +36,27 @@ final class BinderScreen: ObservableObject {
     @Published var query = ""
     @Published var status = BinderStatus.any
     @Published var sort: GridSort?
+    /// The item whose name is being typed over in its row, and what has been typed.
+    @Published var renaming: String?
+    @Published var renameText = ""
     var monitor: Any?
+    /// Where each row on screen is, in the window, so a press can be matched to a row.
+    var rowFrames: [String: CGRect] = [:]
+    /// The row the mouse went down on, and where: the start of a drag of several files.
+    var pressed: (path: String, at: NSPoint)?
+    let dragSource = BinderDragSource()
+    /// The screen that is showing, for the test harness.
+    static weak var current: BinderScreen?
+
+    init() { BinderScreen.current = self }
+
+    /// Starts typing over an item's name in its row, as Return does in Finder. Only the name
+    /// is offered: the index in front and the extension behind stay as they are.
+    func beginRename(_ item: BinderItem) {
+        select(item.path)
+        renameText = BinderIndexer.nameParts(of: item).stem
+        renaming = item.path
+    }
 
     var filtering: Bool { onlyProblems || status != .any || !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -108,8 +128,24 @@ struct BinderView: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var screen = BinderScreen()
     @AppStorage("binder.flat") private var flat = false
+    @FocusState private var renameFocused: Bool
 
     static let rowHeight: CGFloat = 25
+
+    private func startRename(_ item: BinderItem) { screen.beginRename(item) }
+
+    private func commitRename() {
+        guard let path = screen.renaming else { return }
+        screen.renaming = nil
+        renameFocused = false
+        guard let item = model.binder?.item(path), screen.renameText.trimmingCharacters(in: .whitespaces) != BinderIndexer.nameParts(of: item).stem else { return }
+        screen.select(model.renameBinderItem(path, to: screen.renameText))
+    }
+
+    private func cancelRename() {
+        screen.renaming = nil
+        renameFocused = false
+    }
 
     private func problems(_ tree: BinderTree) -> Set<String> {
         Set(tree.duplicateIndexes.flatMap { $0.items.map(\.path) }).union(tree.unindexed.map(\.path)).union(tree.unfiled.map(\.path))
@@ -243,6 +279,14 @@ struct BinderView: View {
                 let relative = String(path.dropFirst(root.count + 1))
                 if screen.primary != relative { screen.select(relative) }
             }
+        }
+        .onChange(of: screen.renaming) { _, path in
+            // The name's field takes the typing as soon as it appears.
+            if path != nil { DispatchQueue.main.async { renameFocused = true } }
+        }
+        .onChange(of: renameFocused) { _, on in
+            // Clicking away from the name finishes the rename, as in Finder.
+            if !on, screen.renaming != nil { commitRename() }
         }
         .onChange(of: model.binder) { _, tree in
             // What was renamed or removed is no longer selected.
@@ -399,7 +443,7 @@ struct BinderView: View {
                         screen.selection = ids
                         if !ids.contains(screen.anchor ?? "") { screen.anchor = ids.count == 1 ? ids.first : nil }
                     }
-                }, menu: { ids in flatMenu(ids, tree) })
+                }, menu: { ids in flatMenu(ids, tree) }, dragURL: { id in tree.item(id).map { tree.url($0) } })
             }
         }
     }
@@ -419,6 +463,7 @@ struct BinderView: View {
             menu.addItem(.separator())
             menu.addItem(ActionItem(one.index == nil ? "Set Index…" : "Change Index…", enabled: !one.parentPath.isEmpty) { model.showSetIndex(for: one.path) })
             menu.addItem(ActionItem("Rename…") { model.renameBinderItem(one.path) })
+            if !one.isPlaceholder { menu.addItem(ActionItem("Turn into Placeholder…") { model.turnIntoPlaceholder(one.path) }) }
         } else {
             menu.addItem(.separator())
         }
@@ -453,6 +498,7 @@ struct BinderView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .onPreferenceChange(BinderRowFrames.self) { screen.rowFrames = $0 }
                 // Below the last row: files dropped there go into the binder folder itself.
                 Color.clear
                     .frame(maxWidth: .infinity, minHeight: 80)
@@ -474,7 +520,8 @@ struct BinderView: View {
     /// A click selects; ⌘-click adds or removes one; ⇧-click takes everything from the last
     /// click to this one.
     private func clicked(_ item: BinderItem, in rows: [BinderItem]) {
-        let flags = NSEvent.modifierFlags
+        // The keys held for this click (not whatever the keyboard happens to be doing now).
+        let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
         if flags.contains(.command) {
             if screen.selection.contains(item.path) { screen.selection.remove(item.path) } else { screen.selection.insert(item.path) }
             screen.anchor = item.path
@@ -528,11 +575,23 @@ struct BinderView: View {
             Image(systemName: item.isFolder ? "folder.fill" : (item.isPlaceholder ? "doc.badge.ellipsis" : "doc"))
                 .foregroundStyle(selected ? Color.white : (item.isFolder ? Color.accentColor : Color.secondary))
                 .frame(width: 18)
-            Text(item.displayTitle)
-                .fontWeight(item.isFolder ? .semibold : .regular)
-                .foregroundStyle(item.isPlaceholder ? secondary : primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            if screen.renaming == item.path {
+                HStack(spacing: 1) {
+                    TextField("Name", text: $screen.renameText)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($renameFocused)
+                        .onSubmit { commitRename() }
+                        .onExitCommand { cancelRename() }
+                        .frame(minWidth: 180, idealWidth: 320, maxWidth: 460)
+                    Text(BinderIndexer.nameParts(of: item).ext).foregroundStyle(secondary)
+                }
+            } else {
+                Text(item.displayTitle)
+                    .fontWeight(item.isFolder ? .semibold : .regular)
+                    .foregroundStyle(item.isPlaceholder ? secondary : primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
             if item.isFolder && closed {
                 let inside = item.children.count
                 Text("\(inside) item\(inside == 1 ? "" : "s")").font(.caption).foregroundStyle(secondary)
@@ -574,6 +633,7 @@ struct BinderView: View {
             }
         }
         .contentShape(Rectangle())
+        .background(GeometryReader { geo in Color.clear.preference(key: BinderRowFrames.self, value: [item.path: geo.frame(in: .global)]) })
         .gesture(TapGesture().onEnded { clicked(item, in: rows) })
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             if item.isFolder { toggle(item.path) } else { NSWorkspace.shared.open(tree.url(item)) }
@@ -586,7 +646,8 @@ struct BinderView: View {
             if item.isFolder {
                 row
             } else {
-                // A file can be dragged to a new place in the list.
+                // A file can be dragged to a new place in the list, or out to Finder. (When several
+                // are selected the drag is started from the mouse itself, so that all of them go.)
                 row.onDrag {
                     if !screen.selection.contains(item.path) { screen.select(item.path) }
                     return NSItemProvider(object: tree.url(item) as NSURL)
@@ -636,9 +697,33 @@ struct BinderView: View {
         let outside = urls.filter { inside($0) == nil }
         let target = drop.flatMap { tree.item($0.target) }
         if outside.isEmpty {
-            guard let drop, let target, let path = urls.first.flatMap(inside) else { return }
+            let moving = urls.compactMap(inside)
+            if moving.count > 1 {
+                // Several files at once go into the folder they were let go on (or the folder of
+                // the file they were let go on), each with its next index.
+                guard let target else { return }
+                let folderPath = target.isFolder ? target.path : target.parentPath
+                guard !folderPath.isEmpty else {
+                    model.status = "Let the files go on a folder, or on a file inside one."
+                    return
+                }
+                let renames = BinderIndexer.file(Set(moving), into: folderPath, in: tree)
+                if renames.isEmpty {
+                    model.status = "Those files are already in “\((folderPath as NSString).lastPathComponent)”."
+                } else if model.applyBinderRenames(renames, actionName: "Move in Binder") {
+                    screen.selection = Set(renames.map(\.to))
+                    screen.anchor = nil
+                }
+                return
+            }
+            guard let drop, let target, let path = moving.first else { return }
             if target.isPlaceholder && drop == .onto(target.path) && path != target.path {
                 model.showReplacePlaceholder(.inside(path), placeholder: target.path)
+                return
+            }
+            // On another file: a new version of it, or its index, or simply into its folder.
+            if !target.isFolder && drop == .onto(target.path) && path != target.path {
+                model.showDropOnFile(.inside(path), target: target.path)
                 return
             }
             let renames = BinderIndexer.move(path, drop, in: tree)
@@ -666,6 +751,10 @@ struct BinderView: View {
             model.showReplacePlaceholder(.outside(outside[0]), placeholder: target.path)
             return
         }
+        if let drop, let target, !target.isFolder, drop == .onto(target.path) {
+            model.showDropOnFile(.outside(outside[0]), target: target.path)
+            return
+        }
         // Let go between two files with a number free between them: that number is the offer.
         var at: BinderIndex?
         var free = false
@@ -688,10 +777,13 @@ struct BinderView: View {
     /// list, ← → close and open a folder, ⌘O opens and ⌘⌫ moves to the Trash — as in Finder.
     private func installKeys() {
         guard screen.monitor == nil else { return }
-        screen.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak screen, weak model] event in
+        screen.monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak screen, weak model] event in
             guard let screen, let model, model.selection == .binder, let tree = model.binder else { return event }
             let inPreview = event.window is QLPreviewPanel
             let inMain = event.window?.identifier?.rawValue.hasPrefix("main") ?? false
+            if event.type != .keyDown {
+                return BinderView.mouse(event, screen: screen, tree: tree, inMain: inMain)
+            }
             guard inPreview || (inMain && !(event.window?.firstResponder is NSText)) else { return event }
             let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
             let isFlat = UserDefaults.standard.bool(forKey: "binder.flat")
@@ -720,6 +812,10 @@ struct BinderView: View {
                 if screen.preview != nil, !item.isFolder { screen.preview = tree.url(item) }
             }
             switch event.keyCode {
+            case 36, 76: // Return: type over the name, as in Finder
+                guard flags.isEmpty, !inPreview, let item = screen.primary.flatMap({ tree.item($0) }), screen.selection.count == 1 else { return event }
+                if isFlat { model.renameBinderItem(item.path) } else { screen.beginRename(item) }
+                return nil
             case 49: // Space
                 if screen.preview != nil {
                     screen.preview = nil
@@ -752,6 +848,47 @@ struct BinderView: View {
             default:
                 return event
             }
+        }
+    }
+
+    /// Several selected files are dragged together. SwiftUI's own drag carries one item, so
+    /// when more than one file is selected and the mouse goes down on one of them and moves,
+    /// the drag is started here with every selected file in it — to another folder of the
+    /// binder, or out to Finder or another app (which gets copies; the binder keeps its files).
+    private static func mouse(_ event: NSEvent, screen: BinderScreen, tree: BinderTree, inMain: Bool) -> NSEvent? {
+        guard inMain, let window = event.window, let content = window.contentView, !UserDefaults.standard.bool(forKey: "binder.flat") else {
+            screen.pressed = nil
+            return event
+        }
+        switch event.type {
+        case .leftMouseDown:
+            var p = content.convert(event.locationInWindow, from: nil)
+            if !content.isFlipped { p.y = content.bounds.height - p.y }
+            screen.pressed = screen.rowFrames.first { $0.value.contains(p) }.map { ($0.key, event.locationInWindow) }
+            return event
+        case .leftMouseUp:
+            screen.pressed = nil
+            return event
+        default:
+            guard let pressed = screen.pressed, screen.selection.contains(pressed.path) else { return event }
+            let files = tree.files.filter { screen.selection.contains($0.path) }
+            guard files.count > 1 else { return event }
+            let moved = hypot(event.locationInWindow.x - pressed.at.x, event.locationInWindow.y - pressed.at.y)
+            guard moved > 4 else { return nil }
+            screen.pressed = nil
+            let at = content.convert(event.locationInWindow, from: nil)
+            let items = files.enumerated().map { n, file -> NSDraggingItem in
+                let url = tree.url(file)
+                let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+                let icon = NSWorkspace.shared.icon(forFile: url.path)
+                icon.size = NSSize(width: 32, height: 32)
+                let step = CGFloat(min(n, 6)) * 3
+                item.setDraggingFrame(NSRect(x: at.x - 16 + step, y: at.y - 16 + (content.isFlipped ? step : -step), width: 32, height: 32), contents: icon)
+                return item
+            }
+            let session = content.beginDraggingSession(with: items, event: event, source: screen.dragSource)
+            session.draggingFormation = .stack
+            return nil
         }
     }
 
@@ -802,7 +939,10 @@ struct BinderView: View {
         if item.index != nil {
             Button("Remove Index") { model.applyBinderRenames(BinderIndexer.removeIndex(from: item.path, in: tree), actionName: "Remove Index") }
         }
-        Button("Rename…") { model.renameBinderItem(item.path) }
+        Button("Rename") { startRename(item) }
+        if !item.isFolder && !item.isPlaceholder {
+            Button("Turn into Placeholder…") { model.turnIntoPlaceholder(item.path) }
+        }
         if item.isFolder {
             Divider()
             Button("Close the Gaps in the Numbering") { model.applyBinderRenames(BinderIndexer.closeGaps(in: item.path, tree: tree), actionName: "Close Gaps") }
@@ -869,6 +1009,100 @@ private struct BinderRowDrop: DropDelegate {
         hover = nil
         perform(info.itemProviders(for: [.fileURL]), drop)
         return true
+    }
+}
+
+/// Where the rows of the binder list are, by path.
+struct BinderRowFrames: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// The source of a drag of several files. Inside the app they are moved; anywhere else gets copies.
+final class BinderDragSource: NSObject, NSDraggingSource {
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? [.move, .generic] : .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        AppModel.shared.refreshBinder()
+    }
+}
+
+/// A file let go on another file. It can replace it as a new version (same name, same index,
+/// the old one to the Trash), take its index (the other is left with none), or simply join
+/// the folder.
+struct DropOnFileView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.closeWindow) private var closeWindow
+    let source: PlaceholderArrival
+    let target: String
+    @State private var choice = ""
+
+    var body: some View {
+        if let tree = model.binder, let file = tree.item(target) {
+            let outside: Bool = { if case .outside = source { return true }; return false }()
+            let sameFolder: Bool = { if case .inside(let p) = source { return (p as NSString).deletingLastPathComponent == file.parentPath }; return false }()
+            let next = BinderIndexer.nextFileIndex(in: file.parentPath, tree: tree)
+            let name = model.versionName(for: source, replacing: file)
+            let marked = !(model.engagement?.signOffs(for: target).isEmpty ?? true)
+            let picked = choice.isEmpty ? (outside ? "beside" : (file.index != nil ? "index" : "version")) : choice
+            VStack(alignment: .leading, spacing: 12) {
+                Text("“\(source.name)” was let go on “\(file.name)”").font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Picker("", selection: Binding(get: { picked }, set: { choice = $0 })) {
+                    Text("Replace it with this version — the name and index stay “\(name)”, and the version there now goes to the Trash").tag("version")
+                    if let index = file.index {
+                        Text("Take its index — this file becomes \(index.text), and “\(file.title)” stays in the folder with no index").tag("index")
+                    }
+                    if !sameFolder {
+                        Text(outside ? "Add it to this folder as a file of its own\(next.map { ", with the next index (\($0.text))" } ?? "")"
+                                     : "Move it into this folder as a file of its own\(next.map { ", with the next index (\($0.text))" } ?? "")").tag("beside")
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                Group {
+                    switch picked {
+                    case "version":
+                        Text("Journal entries keep referring to it."
+                             + (marked ? " Its sign-off marks stay, and show as changed, because it is no longer the file that was signed." : "")
+                             + (name != file.name ? " The new file is of another type, so the name takes its extension." : "")
+                             + " If the document is open in another app, close it there first.")
+                    case "index": Text("Journal entries that refer to “\(file.title)” still refer to it.")
+                    default: Text("“\(file.title)” is left as it is.")
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                HStack {
+                    Text(outside ? "The file is \(UserDefaults.standard.bool(forKey: "binder.addCopies") ? "copied" : "moved") into the binder. ⌘Z undoes it." : "⌘Z undoes it.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") { closeWindow() }
+                        .keyboardShortcut(.cancelAction)
+                    Button(picked == "version" ? "Replace" : (picked == "index" ? "Take Its Index" : "Add")) {
+                        let done: Bool
+                        switch picked {
+                        case "version": done = model.replaceVersion(source, of: target)
+                        case "index": done = model.takeIndex(source, of: target)
+                        default: done = model.addBeside(source, target)
+                        }
+                        if done { closeWindow() }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(18)
+            .frame(minWidth: 560, minHeight: 330)
+        } else {
+            EmptyState(title: "That file isn't in the binder any more", message: "")
+                .frame(minWidth: 560, minHeight: 330)
+        }
     }
 }
 
