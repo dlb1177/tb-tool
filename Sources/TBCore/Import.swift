@@ -78,6 +78,9 @@ public struct ImportMapping: Equatable, Sendable {
     public var forced: Set<Int> = []
     /// True when the roles came from a layout saved on an earlier import.
     public var fromSavedLayout = false
+    /// A number at the front of an account's text ("10001 Operating") is taken as its account
+    /// number. Turned off, the text is kept whole as the account's name and it has no number.
+    public var splitNumbers = true
 
     public init(headerRow: Int?, roles: [ColumnRole], sign: SignConvention = .debitPositive) {
         self.headerRow = headerRow
@@ -177,7 +180,7 @@ public enum TBImporter {
     }
 
     public static func automatic(sheets: [RawSheet], sourceName: String, profiles: [ImportProfile] = [], sheet: String? = nil,
-                                 knownTypes: [String: AccountType] = [:])
+                                 knownTypes: [String: AccountType] = [:], splitNumbers: Bool = true)
         throws -> (sheetIndex: Int, mapping: ImportMapping, preview: ImportPreview)
     {
         var indices = Array(sheets.indices)
@@ -187,7 +190,8 @@ public enum TBImporter {
                 throw TBError("\(sourceName) has no sheet named “\(sheet)”. Sheets: \(sheets.map(\.name).joined(separator: ", ")).")
             }
         }
-        let (index, mapping) = bestGuess(sheets: sheets, among: indices, profiles: profiles, knownTypes: knownTypes)
+        var (index, mapping) = bestGuess(sheets: sheets, among: indices, profiles: profiles, knownTypes: knownTypes)
+        if !splitNumbers { mapping.splitNumbers = false }
         let preview = evaluate(sheets[index], mapping, sourceName: sourceName, knownTypes: knownTypes)
         if let problem = preview.problems.first { throw TBError("\(sourceName): \(problem)") }
         if let bad = preview.rows.first(where: { $0.kind == .badAmount }) {
@@ -224,6 +228,7 @@ public enum TBImporter {
                 let sig = ImportProfiles.signature(row)
                 if !sig.isEmpty, let p = profiles.first(where: { $0.signature == sig }) {
                     var m = ImportMapping(headerRow: i, roles: p.roles, sign: p.sign)
+                    m.splitNumbers = p.splitNumbers ?? true
                     while m.roles.count < width { m.roles.append(.ignore) }
                     m.fromSavedLayout = true
                     return m
@@ -525,7 +530,11 @@ public enum TBImporter {
 
             // The account: number and name from whichever columns hold them.
             var number = cell(row, numberCol), name = cell(row, nameCol)
-            if combinedCol != nil {
+            if !m.splitNumbers {
+                // Kept whole: whatever the account columns hold, joined, is the account's name.
+                let whole = [number, cell(row, combinedCol), name].filter { !$0.isEmpty }.joined(separator: " ")
+                (number, name) = ("", whole)
+            } else if combinedCol != nil {
                 let t = cell(row, combinedCol)
                 if !t.isEmpty {
                     let s = splitAccount(t)
@@ -533,7 +542,7 @@ public enum TBImporter {
                     if name.isEmpty { name = s.name.isEmpty ? (s.number.isEmpty ? t : "") : s.name }
                 }
             }
-            if numberCol != nil && nameCol == nil && combinedCol == nil && !number.isEmpty {
+            if m.splitNumbers && numberCol != nil && nameCol == nil && combinedCol == nil && !number.isEmpty {
                 let s = splitAccount(number)
                 if s.number.isEmpty {
                     (number, name) = ("", number)  // text in the number column: treat as the name
@@ -541,7 +550,7 @@ public enum TBImporter {
                     (number, name) = (s.number, s.name)
                 }
             }
-            if nameCol != nil && numberCol == nil && combinedCol == nil && !name.isEmpty {
+            if m.splitNumbers && nameCol != nil && numberCol == nil && combinedCol == nil && !name.isEmpty {
                 let s = splitAccount(name)
                 if !s.number.isEmpty && !s.name.isEmpty { (number, name) = (s.number, s.name) }
             }
@@ -629,7 +638,7 @@ public enum TBImporter {
             out.append(pr)
         }
 
-        resolveSubaccounts(&out)
+        if m.splitNumbers { resolveSubaccounts(&out) }
         var repeated = Set<String>()
         var seen = Set<String>()
         for pr in out where pr.included {

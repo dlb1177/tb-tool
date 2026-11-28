@@ -20,6 +20,7 @@ struct UngroupedBanner: View {
                     Button(show == nil ? "Show Ungrouped Accounts" : "Show Them") {
                         if let show { show() } else { model.showUngroupedAccounts() }
                     }
+                    Button("Suggest Groupings with AI…") { model.showAIGrouping() }
                     Spacer()
                 }
                 .font(.system(size: 12))

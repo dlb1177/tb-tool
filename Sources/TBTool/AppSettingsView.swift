@@ -123,6 +123,7 @@ struct AppSettingsView: View {
                 Picker("", selection: $tab) {
                     Text("Grouping Lists").tag("groupings")
                     Text("Binder Layout").tag("binder")
+                    Text("AI").tag("ai")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -146,6 +147,8 @@ struct AppSettingsView: View {
             Divider()
             if tab == "binder" {
                 BinderLayoutSettings()
+            } else if tab == "ai" {
+                AISettings()
             } else {
                 groupingLists
             }

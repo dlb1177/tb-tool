@@ -40,28 +40,25 @@ struct JournalListView: View {
     @State private var search = ""
     @State private var rules = FilterSet()
     @State private var confirmDelete = false
-    @State private var sortOrder: [KeyPathComparator<JournalRow>] = []
-    /// Column order and hidden columns, remembered between visits.
-    @AppStorage("journal.columns") private var columnLayout = TableColumnCustomization<JournalRow>()
 
     var body: some View {
         if let ledger = model.ledger {
             let e = ledger.engagement
             let terms = search.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
             let brokenByEntry = Dictionary(grouping: model.brokenLinks, by: \.entryID).mapValues(\.count)
-            let all = Reports(ledger: ledger).sortedEntries().filter { filter == "all" || $0.type.rawValue == filter }.map { je in
-                JournalRow(id: je.id, number: je.number, type: je.type.label, date: je.date,
-                           entities: je.entityIDs.map { e.entity($0)?.name ?? $0 }.joined(separator: ", "),
-                           description: je.description, amount: je.totalDebits.cents, files: je.references.count,
-                           broken: brokenByEntry[je.id] ?? 0, roll: je.rollForward.short,
-                           status: je.pending ? "Needs amounts" : "Posted")
-            }.filter { r in
-                let hay = "\(r.number) \(r.type) \(r.date) \(r.entities) \(r.description) \(Money(cents: r.amount).grouped) \(r.status)".lowercased()
-                guard terms.allSatisfy({ hay.contains($0) }) else { return false }
-                let cells = r.cells
+            let entries = Reports(ledger: ledger).sortedEntries().filter { je in
+                guard filter == "all" || je.type.rawValue == filter, JournalReportView.matches(je, terms, in: e) else { return false }
+                guard rules.isActive else { return true }
+                // The rule builder tests an entry as a whole: its number, type, amount and so on.
+                let cells = JournalRow(id: je.id, number: je.number, type: je.type.label, date: je.date,
+                                       entities: je.entityIDs.map { e.entity($0)?.name ?? $0 }.joined(separator: ", "),
+                                       description: je.description, amount: je.totalDebits.cents, files: je.references.count,
+                                       broken: brokenByEntry[je.id] ?? 0, roll: je.rollForward.short,
+                                       status: je.pending ? "Needs amounts" : "Posted").cells
                 return rules.matches(cell: { cells[$0] }, all: Array(cells.values))
             }
-            let entries = sortOrder.isEmpty ? all : all.sorted(using: sortOrder)
+            let shown = Set(entries.map(\.id))
+            let picked = selection.intersection(shown)
             VStack(spacing: 0) {
                 PageHeader(title: "Journal Entries", subtitle: summary(e)) {
                     SearchBox(prompt: "Search", text: $search)
@@ -74,20 +71,20 @@ struct JournalListView: View {
                     }
                     .labelsHidden()
                     .fixedSize()
-                    Button("Edit") { if let id = selection.first { model.editEntry(id) } }
-                        .disabled(selection.count != 1)
-                    Button("Duplicate") { if let id = selection.first { model.duplicateEntry(id) } }
-                        .disabled(selection.count != 1)
+                    Button("Edit") { if let id = picked.first { model.editEntry(id) } }
+                        .disabled(picked.count != 1)
+                    Button("Duplicate") { if let id = picked.first { model.duplicateEntry(id) } }
+                        .disabled(picked.count != 1)
                     Menu("Next Year") {
                         ForEach(RollForward.allCases, id: \.self) { value in
-                            Button(value.label) { model.setRollForward(value, for: selection) }
+                            Button(value.label) { model.setRollForward(value, for: picked) }
                         }
                     }
                     .fixedSize()
-                    .disabled(selection.isEmpty)
+                    .disabled(picked.isEmpty)
                     .help("What the roll forward to next year does with the selected entries")
                     Button("Delete", role: .destructive) { confirmDelete = true }
-                        .disabled(selection.isEmpty)
+                        .disabled(picked.isEmpty)
                     Menu {
                         ForEach(JEType.allCases, id: \.self) { type in
                             Button("\(type.label) Entry") { model.newEntry(type) }
@@ -107,85 +104,61 @@ struct JournalListView: View {
                                message: "Adjusting, reclassifying, and tax-only entries post to one trial balance. Eliminating entries choose a trial balance on every line.",
                                button: "New Adjusting Entry") { model.newEntry(.adjusting) }
                 } else {
-                    Table(entries, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columnLayout) {
-                        TableColumn("Entry", value: \.number, comparator: .localizedStandard) { r in Text(r.number).fontWeight(.medium) }
-                            .width(min: 36, ideal: 70)
-                            .customizationID("entry")
-                        TableColumn("Type", value: \.type) { r in Text(r.type) }
-                            .width(min: 36, ideal: 100)
-                            .customizationID("type")
-                        TableColumn("Date", value: \.date) { r in Text(r.date).monospacedDigit() }
-                            .width(min: 36, ideal: 90)
-                            .customizationID("date")
-                        TableColumn("Trial Balance", value: \.entities, comparator: .localizedStandard) { r in Text(r.entities) }
-                            .width(min: 36, ideal: 170)
-                            .customizationID("trial-balance")
-                        TableColumn("Description", value: \.description, comparator: .localizedStandard) { r in Text(r.description) }
-                            .width(min: 36, ideal: 300)
-                            .customizationID("description")
-                        TableColumn("Amount", value: \.amount) { r in
-                            if r.status == "Posted" {
-                                Text(Money(cents: r.amount).grouped).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
-                            } else {
-                                Text("needs amounts").foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .trailing)
-                            }
+                    HStack(spacing: 10) {
+                        Text(entries.count == e.journalEntries.count ? "\(entries.count) entr\(entries.count == 1 ? "y" : "ies")"
+                                                                     : "\(entries.count) of \(e.journalEntries.count) entries")
+                            .monospacedDigit()
+                        if !picked.isEmpty {
+                            Text("· \(picked.count) selected")
+                            Button("Deselect") { selection = [] }.buttonStyle(.link)
                         }
-                        .width(min: 36, ideal: 120)
-                        .customizationID("amount")
-                        TableColumn("Files", value: \.files) { r in
-                            if r.broken > 0 {
-                                Label("\(r.broken) missing", systemImage: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                    .help("\(r.broken) of this entry's \(r.files) linked file\(r.files == 1 ? "" : "s") can't be found. Choose Fix Links to repair.")
-                            } else if r.files > 0 {
-                                Label("\(r.files)", systemImage: "paperclip").foregroundStyle(.secondary)
-                            }
-                        }
-                        .width(min: 36, ideal: 96)
-                        .customizationID("files")
-                        TableColumn("Next Year", value: \.roll) { r in Text(r.roll).foregroundStyle(.secondary) }
-                            .width(min: 36, ideal: 120)
-                            .customizationID("next-year")
+                        Spacer()
+                        Text("Click to select (⌘ or ⇧ for several) · double-click to edit · drag an entry to reorder and renumber")
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
-                    .background(TableColumnFitter(key: "journal", contents: [
-                        "Entry": entries.map(\.number), "Type": entries.map(\.type), "Date": entries.map(\.date), "Trial Balance": entries.map(\.entities),
-                        "Description": entries.map(\.description), "Amount": entries.map { $0.status == "Posted" ? Money(cents: $0.amount).grouped : "needs amounts" },
-                        "Files": ["0 missing"], "Next Year": entries.map(\.roll),
-                    ], extra: ["Files": 22]))
-                    .contextMenu(forSelectionType: String.self) { ids in
-                        if ids.count == 1, let id = ids.first {
-                            Button("Edit") { model.editEntry(id) }
-                            Button("Duplicate") { model.duplicateEntry(id) }
-                            Divider()
-                        }
-                        if !ids.isEmpty {
-                            Menu("Next Year") {
-                                ForEach(RollForward.allCases, id: \.self) { value in
-                                    Button(value.label) { model.setRollForward(value, for: ids) }
-                                }
-                            }
-                            Divider()
-                            Button("Delete", role: .destructive) {
-                                selection = ids
-                                confirmDelete = true
-                            }
-                        }
-                    } primaryAction: { ids in
-                        if let id = ids.first { model.editEntry(id) }
-                    }
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    Divider()
+                    JournalCards(e: e, entries: entries, emptyTitle: "No entries match",
+                                 emptyMessage: "Nothing passes the search, the type and the filters chosen above.",
+                                 selection: $selection,
+                                 reorder: { moving, target, after in model.reorderEntries(moving: moving, target: target, after: after) },
+                                 menu: { ids in AnyView(menu(ids)) })
                 }
             }
-            .confirmationDialog("Delete \(selection.count) journal entr\(selection.count == 1 ? "y" : "ies")?", isPresented: $confirmDelete) {
+            .confirmationDialog("Delete \(picked.count) journal entr\(picked.count == 1 ? "y" : "ies")?", isPresented: $confirmDelete) {
                 Button("Delete", role: .destructive) {
-                    let ids = selection
+                    let ids = picked
                     model.mutate("Delete Journal Entr\(ids.count == 1 ? "y" : "ies")") { e in ids.forEach { e.deleteEntry($0) } }
                     ids.forEach { model.closeEditor($0) }
                     selection = []
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The balances go back to what they were without \(selection.count == 1 ? "it" : "them"). You can undo this.")
+                Text("The balances go back to what they were without \(picked.count == 1 ? "it" : "them"). You can undo this.")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func menu(_ ids: Set<String>) -> some View {
+        if ids.count == 1, let id = ids.first {
+            Button("Edit") { model.editEntry(id) }
+            Button("Duplicate") { model.duplicateEntry(id) }
+            Divider()
+        }
+        Menu("Next Year") {
+            ForEach(RollForward.allCases, id: \.self) { value in
+                Button(value.label) { model.setRollForward(value, for: ids) }
+            }
+        }
+        Divider()
+        Button(ids.count == 1 ? "Delete" : "Delete \(ids.count) Entries", role: .destructive) {
+            selection = ids
+            confirmDelete = true
         }
     }
 
@@ -196,7 +169,7 @@ struct JournalListView: View {
         }
         let waiting = e.journalEntries.filter(\.pending).count
         if waiting > 0 { parts.append("\(waiting) rolled forward and waiting for amounts") }
-        return parts.isEmpty ? "Double-click an entry to edit it" : parts.joined(separator: " · ") + " · double-click to edit"
+        return parts.isEmpty ? "Double-click an entry to edit it" : parts.joined(separator: " · ")
     }
 }
 

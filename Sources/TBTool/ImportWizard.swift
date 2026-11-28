@@ -237,6 +237,13 @@ struct ImportWizard: View {
                     .labelsHidden()
                     .frame(width: 380)
                 }
+                Toggle("Split account numbers from names", isOn: Binding(get: { mapping.splitNumbers }, set: {
+                    mapping.splitNumbers = $0
+                    mapping.fromSavedLayout = false
+                }))
+                .toggleStyle(.checkbox)
+                .fixedSize()
+                .help("On: a number at the front of an account (“10001 Operating”) becomes its account number. Off: the text is kept whole as the account's name, and the account has no number.")
                 if mapping.usesBalance {
                     field("Balance signs") {
                         Picker("", selection: $mapping.sign) {

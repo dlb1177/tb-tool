@@ -48,6 +48,9 @@ struct TBToolApp: App {
                     .disabled(model.engagement == nil)
                 Button("Export Chart of Accounts…") { model.exportChartPanel(csv: false) }
                     .disabled(model.engagement == nil)
+                Button("Group Ungrouped Accounts with AI…") { model.showAIGrouping() }
+                    .keyboardShortcut("g", modifiers: [.command, .option])
+                    .disabled(model.engagement == nil)
                 Button("Import Grouping List…") { model.importGroupingListPanel() }
                     .disabled(model.engagement == nil)
                 Button("Export Grouping List…") { model.exportGroupingListPanel(csv: false) }

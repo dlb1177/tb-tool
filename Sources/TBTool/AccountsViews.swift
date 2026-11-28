@@ -41,7 +41,6 @@ struct AccountsView: View {
     @State private var rules = FilterSet()
     @State private var sortOrder = [KeyPathComparator(\AccountRow.number, comparator: .localizedStandard)]
     @State private var showPicker = false
-    @State private var confirmDelete = false
     /// Column order and hidden columns, remembered between visits.
     @AppStorage("accounts.columns") private var columnLayout = TableColumnCustomization<AccountRow>()
 
@@ -55,6 +54,8 @@ struct AccountsView: View {
             let picked = selection.intersection(shownIDs)
             VStack(spacing: 0) {
                 PageHeader(title: "Accounts", subtitle: subtitle(e)) {
+                    Button { model.showAIGrouping() } label: { Label("Group with AI…", systemImage: "sparkles") }
+                        .help("Have Claude Opus 5.5 suggest a grouping for every account that has none. You choose what is sent and review the suggestions before any are applied.")
                     Menu {
                         Button("New Account…") { model.showNewAccount() }
                         Divider()
@@ -82,13 +83,6 @@ struct AccountsView: View {
             }
             .onAppear { if model.showUngroupedRequested { showUngrouped() } }
             .onChange(of: model.showUngroupedRequested) { _, asked in if asked { showUngrouped() } }
-            .confirmationDialog("Delete \(picked.count) account\(picked.count == 1 ? "" : "s")?", isPresented: $confirmDelete) {
-                Button("Delete", role: .destructive) {
-                    if model.mutate("Delete Accounts", { e in try picked.forEach { try e.deleteAccount($0) } }) { selection = [] }
-                }
-            } message: {
-                Text("Only accounts with no balances and no journal lines can be deleted.")
-            }
         }
     }
 
@@ -250,7 +244,9 @@ struct AccountsView: View {
                 model.mutate("Clear Grouping") { $0.setGrouping(nil, forAccounts: ids) }
             }
             .disabled(picked.isEmpty)
-            Button("Delete…", role: .destructive) { confirmDelete = true }
+            Button("Delete…", role: .destructive) {
+                if model.deleteAccounts(selection) { selection = [] }
+            }
                 .disabled(picked.isEmpty)
             Spacer()
         }

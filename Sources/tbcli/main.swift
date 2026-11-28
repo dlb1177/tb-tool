@@ -8,7 +8,7 @@ let usage = """
 tbcli — work with a TB Tool trial balance file
 
   tbcli new <file.json> [--name "Client"] [--period YYYY-MM-DD]
-  tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names] [--append | --append-replace]
+  tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names] [--append | --append-replace] [--keep-names-whole]
                                                            import (or re-import) one trial balance; the
                                                            layout is detected (or taken from a saved one).
                                                            With --prior-year the file is that year's closing
@@ -66,7 +66,7 @@ func positional(_ args: [String]) -> [String] {
         }
         if a.hasPrefix("--") {
             // Switches stand alone; every other option is followed by its value.
-            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names", "--binder", "--append", "--append-replace"].contains(a)
+            skip = !["--overwrite", "--add-missing", "--no-types", "--merge", "--use-file-names", "--binder", "--append", "--append-replace", "--keep-names-whole"].contains(a)
             continue
         }
         out.append(a)
@@ -102,7 +102,8 @@ do {
         let source = URL(fileURLWithPath: pos[1])
         let sheets = try SourceReader.read(url: source)
         let result = try TBImporter.automatic(sheets: sheets, sourceName: source.lastPathComponent, profiles: ImportProfiles.load(),
-                                              sheet: option("--sheet", in: rest), knownTypes: e.accountTypes)
+                                              sheet: option("--sheet", in: rest), knownTypes: e.accountTypes,
+                                              splitNumbers: !rest.contains("--keep-names-whole"))
         let tb = result.preview.tb
         let name = option("--entity", in: rest) ?? TBImporter.suggestedEntityName(fileName: source.lastPathComponent)
         let id: String

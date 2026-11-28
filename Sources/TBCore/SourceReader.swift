@@ -408,12 +408,15 @@ public struct ImportProfile: Codable, Equatable, Sendable {
     public var roles: [ColumnRole]
     public var sign: SignConvention
     public var savedAt: String
+    /// Nil in layouts saved before this was a choice: numbers are split out.
+    public var splitNumbers: Bool?
 
-    public init(signature: String, roles: [ColumnRole], sign: SignConvention) {
+    public init(signature: String, roles: [ColumnRole], sign: SignConvention, splitNumbers: Bool = true) {
         self.signature = signature
         self.roles = roles
         self.sign = sign
         self.savedAt = Timestamp.now()
+        self.splitNumbers = splitNumbers
     }
 }
 
@@ -437,7 +440,7 @@ public enum ImportProfiles {
         var all = load(url)
         guard !sig.isEmpty else { return all }
         all.removeAll { $0.signature == sig }
-        all.insert(ImportProfile(signature: sig, roles: mapping.roles, sign: mapping.sign), at: 0)
+        all.insert(ImportProfile(signature: sig, roles: mapping.roles, sign: mapping.sign, splitNumbers: mapping.splitNumbers), at: 0)
         all = Array(all.prefix(200))
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

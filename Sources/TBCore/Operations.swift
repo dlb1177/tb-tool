@@ -147,17 +147,82 @@ extension Engagement {
         sortedAccounts.filter { grouping($0.grouping) == nil }
     }
 
-    public func isAccountUsed(_ id: String) -> Bool {
-        entities.contains { $0.balances.contains { $0.account == id } }
-            || entities.contains { $0.priorPeriods.contains { $0.balances.contains { $0.account == id } } }
-            || journalEntries.contains { $0.lines.contains { $0.account == id } }
+    /// Whether anything stands in the way of deleting an account. Balances of zero don't count.
+    public func isAccountUsed(_ id: String) -> Bool { !accountUses(id).isEmpty }
+
+    /// What refers to an account, in plain lines: each trial balance that has a balance for it
+    /// this year, each prior year that does, and each journal entry with a line on it. Balances
+    /// of exactly zero are left out — they are nothing, and are dropped when the account goes.
+    public func accountUses(_ id: String) -> [String] {
+        var out: [String] = []
+        for ent in entities {
+            for b in ent.balances where b.account == id && !b.amount.isZero {
+                out.append("\(ent.name): \(currentYear.map(String.init) ?? "this year's") unadjusted balance of \(b.amount.formatted)")
+            }
+            for p in ent.priorPeriods.sorted(by: { $0.year > $1.year }) {
+                for b in p.balances where b.account == id && !b.isZero {
+                    out.append("\(ent.name): \(priorLabel(p.year)) balance of \(b.book.formatted)" + (b.tax != b.book ? " (tax \(b.tax.formatted))" : ""))
+                }
+            }
+        }
+        for je in Reports(self).sortedEntries() {
+            let mine = je.lines.filter { $0.account == id }
+            guard !mine.isEmpty else { continue }
+            let amount = mine.map(\.amount).sum()
+            out.append("\(je.number): \(mine.count) line\(mine.count == 1 ? "" : "s")"
+                       + (je.pending ? ", waiting for amounts" : " of \(amount.formatted)") + (je.description.isEmpty ? "" : " — \(je.description)"))
+        }
+        return out
     }
 
-    public mutating func deleteAccount(_ id: String) throws {
-        guard !isAccountUsed(id) else {
-            throw TBError("Account \(id) has balances (this year or a prior year) or journal entry lines, so it can't be deleted.")
+    /// Deletes an account. One with a balance (this year or a prior year) or a journal line is
+    /// refused, with what is in the way — unless `force` is set. Then its balances and its
+    /// journal lines go with it, and what that leaves out of balance is returned, line by line:
+    /// each trial balance and year, and each journal entry. An entry left with no lines is
+    /// removed. Balances of zero never stand in the way.
+    @discardableResult
+    public mutating func deleteAccount(_ id: String, force: Bool = false) throws -> [String] {
+        guard account(id) != nil else { return [] }
+        let uses = accountUses(id)
+        guard uses.isEmpty || force else {
+            throw TBError("Account \(id) can't be deleted while something refers to it:\n" + uses.prefix(8).joined(separator: "\n") + (uses.count > 8 ? "\n…and \(uses.count - 8) more" : ""))
         }
+        var notes: [String] = []
+        for e in entities.indices {
+            let name = entities[e].name
+            let had = entities[e].balances.contains { $0.account == id && !$0.amount.isZero }
+            entities[e].balances.removeAll { $0.account == id }
+            if had {
+                let off = entities[e].unadjustedTotal
+                notes.append(off.isZero ? "\(name): its \(currentYear.map(String.init) ?? "current") balance was removed; the trial balance still balances"
+                                        : "\(name): the \(currentYear.map(String.init) ?? "current") unadjusted trial balance is now out of balance by \(off.formatted)")
+            }
+            for p in entities[e].priorPeriods.indices {
+                let year = entities[e].priorPeriods[p].year
+                let hadPrior = entities[e].priorPeriods[p].balances.contains { $0.account == id && !$0.isZero }
+                entities[e].priorPeriods[p].balances.removeAll { $0.account == id }
+                if hadPrior {
+                    let off = entities[e].priorPeriods[p].balances.map(\.book).sum()
+                    notes.append(off.isZero ? "\(name): its \(priorLabel(year)) balance was removed; that year still balances"
+                                            : "\(name): \(priorLabel(year)) is now out of balance by \(off.formatted)")
+                }
+            }
+        }
+        var emptied: [String] = []
+        for j in journalEntries.indices where journalEntries[j].lines.contains(where: { $0.account == id }) {
+            journalEntries[j].lines.removeAll { $0.account == id }
+            let je = journalEntries[j]
+            if je.lines.isEmpty {
+                emptied.append(je.id)
+                notes.append("\(je.number) had no other lines and was removed")
+            } else if !je.pending {
+                notes.append(je.imbalance.isZero ? "\(je.number) lost a line and still balances"
+                                                 : "\(je.number) is now out of balance by \(je.imbalance.formatted)")
+            }
+        }
+        journalEntries.removeAll { emptied.contains($0.id) }
         accounts.removeAll { $0.id == id }
+        return notes
     }
 
     /// Changes an account's number, its name, or both. The number is what balances and journal
@@ -738,6 +803,65 @@ extension Engagement {
             .filter { $0.id != entryID && $0.number.uppercased().hasPrefix(prefix) }
             .compactMap { Int($0.number.dropFirst(prefix.count)) }
         return "\(prefix)\((used.max() ?? 0) + 1)"
+    }
+
+    /// What moving journal entries to a new place among the entries of their kind would do.
+    /// Entries are listed in number order, so a new order is a renumbering. When the numbers are
+    /// a plain unbroken run (AJE-1, AJE-2, AJE-3) there is one way to do it. When they have gaps,
+    /// or aren't a series at all, there is a choice, and `ambiguous` says so.
+    public struct EntryReorder: Equatable, Sendable {
+        public var type: JEType
+        /// The entries of this kind, by id, in the order they will be in.
+        public var order: [String]
+        /// The numbers they have now, handed out again in the new order. Nil when the numbers
+        /// aren't one series (different prefixes, or no number at the end).
+        public var sameNumbers: [String]?
+        /// Numbered afresh from 1: AJE-1, AJE-2…
+        public var fromOne: [String]
+        public var ambiguous: Bool { sameNumbers != fromOne }
+    }
+
+    /// The plan for moving `moving` (ids) to just before or after `target`. Only entries of the
+    /// target's kind move: an entry can't change kind by being dragged. Nil when nothing would move.
+    public func planReorder(moving: Set<String>, target: String, after: Bool) -> EntryReorder? {
+        guard let anchor = entry(target) else { return nil }
+        let current = Reports(self).sortedEntries().filter { $0.type == anchor.type }
+        let lifted = current.filter { moving.contains($0.id) && $0.id != target }
+        guard !lifted.isEmpty else { return nil }
+        var order = current.filter { e in !lifted.contains { $0.id == e.id } }
+        guard let at = order.firstIndex(where: { $0.id == target }) else { return nil }
+        order.insert(contentsOf: lifted, at: after ? at + 1 : at)
+        guard order.map(\.id) != current.map(\.id) else { return nil }
+
+        // The numbers as a series: the same text in front, a whole number behind.
+        func parts(_ number: String) -> (String, Int)? {
+            let digits = String(number.reversed().prefix { $0.isASCII && $0.isNumber }.reversed())
+            guard !digits.isEmpty, let n = Int(digits) else { return nil }
+            return (String(number.dropLast(digits.count)), n)
+        }
+        let parsed = current.map { parts($0.number) }
+        var same: [String]? = nil
+        var prefix = anchor.type.prefix + "-"
+        if parsed.allSatisfy({ $0 != nil }), let first = parsed.first??.0, parsed.allSatisfy({ $0!.0.caseInsensitiveCompare(first) == .orderedSame }) {
+            prefix = first
+            same = parsed.map { $0!.1 }.sorted().map { prefix + String($0) }
+        }
+        return EntryReorder(type: anchor.type, order: order.map(\.id), sameNumbers: same, fromOne: order.indices.map { prefix + String($0 + 1) })
+    }
+
+    /// Carries a reorder out, giving the entries the numbers chosen (`plan.sameNumbers` or `plan.fromOne`).
+    public mutating func applyReorder(_ plan: EntryReorder, numbers: [String]) throws {
+        guard numbers.count == plan.order.count, Set(numbers.map { $0.lowercased() }).count == numbers.count else {
+            throw TBError("The entries couldn't be renumbered.")
+        }
+        // No entry outside the move may already have one of the numbers.
+        let moving = Set(plan.order)
+        if let clash = journalEntries.first(where: { e in !moving.contains(e.id) && numbers.contains { $0.caseInsensitiveCompare(e.number) == .orderedSame } }) {
+            throw TBError("\(clash.number) is already the number of another entry.")
+        }
+        for (id, number) in zip(plan.order, numbers) {
+            if let i = journalEntries.firstIndex(where: { $0.id == id }) { journalEntries[i].number = number }
+        }
     }
 
     /// The posting rules. An empty result means the entry may be posted.

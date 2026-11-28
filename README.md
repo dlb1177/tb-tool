@@ -25,12 +25,19 @@ the client's folder**. No server, no account, no database.
 - **Four kinds of journal entry**: adjusting (AJE), reclassifying (RJE), tax-only (TJE) and
   eliminating (EJE). Each lands in its own column: Unadjusted → AJE → Adjusted → RJE → Final
   (Book) → TJE → Tax Basis.
+- **Shows every journal entry in full**, set out as the journal report prints it. Select
+  several, and drag entries into a new order: they are renumbered to match.
 - **Shows the effect of an entry while you type it.** The entry sits in its own window; the
   trial balance, consolidation and reports update live on the other display.
 - **Groups accounts to tax lines**, with subgroups, and reports by grouping. A Form 1065 / 8825
   list is built in; you keep your own standard list per entity type. Each grouping carries an
   account type, and an account's type is simply its grouping's: it is never set on the account,
   so the two cannot disagree. Ungrouped accounts raise an alert.
+- **Offers a first pass at grouping by AI** (optional): Claude Opus 5.5 suggests a grouping for
+  each ungrouped account from your own list and the accounts you have already grouped, with
+  any binder workbooks you tick for context. You review every suggestion before it is applied.
+  It uses your own Anthropic API key, and is the only thing in the app that sends data off
+  your Mac.
 - **References workpapers from entries**: pick from every indexed file in the binder by typing
   part of its index or name. A reference to an Excel workbook names the tab and, if you like,
   the cells, and clicking it opens Excel right there.
@@ -72,6 +79,7 @@ everything the tool does.
 | ![Roll forward](docs/images/roll-forward.png) **Rolling forward** the trial balance and the binder | ![The binder](docs/images/binder.png) **The binder**, with index numbers, sign-offs and alerts |
 | ![Change log](docs/images/change-log.png) **The change log**: what, who, on which Mac, when | ![By grouping](docs/images/trial-balance-by-grouping.png) **A trial balance by grouping**, at the click of a button |
 | ![Journal PDF](docs/images/journal-pdf.png) **The journal as a PDF**: each entry on its own, never split across pages | ![All files](docs/images/binder-all-files.png) **Every file in the binder** in one sortable list, with its sign-offs |
+| ![Journal entries](docs/images/journal-entries.png) **Every journal entry in full**: select several, drag to reorder and renumber | ![AI suggestions](docs/images/ai-review.png) **A first pass at grouping by AI**, reviewed before anything is applied |
 
 ## Getting it
 
@@ -106,7 +114,8 @@ Privacy & Security step.
    Put it in the client's folder for the year; the standard binder folders are made beside it.
 2. Click **Import** and pick one file per trial balance. For each, check the column roles and
    the rows that come in, then click Import.
-3. Open **Accounts**, select accounts, and press **⌘G** to give them a grouping.
+3. Open **Accounts**, select accounts, and press **⌘G** to give them a grouping. (Or, with an
+   Anthropic API key saved in Settings ▸ AI, click **Group with AI…** for a first pass to review.)
 4. Press **⌘J** for an adjusting entry. Type part of an account's number or name to find it.
    Watch the trial balance change as you type, then post.
 5. Open **Reports & Export** and export a report, or click **Quick Export** for the whole
@@ -131,7 +140,16 @@ reader and writer are part of the engine.
 
 ## Your data
 
-TB Tool never sends anything anywhere. A client's file is one JSON document that you can read
+TB Tool keeps your data on your Mac. The one exception is a feature you start yourself:
+**Group with AI** sends the accounts that have no grouping (number, name, balances), the
+file's grouping list, the accounts already grouped, and any binder workbooks you tick to
+Anthropic's API, under your own API key, to get suggested groupings back. The window shows
+what will go before you send it, each request is noted in the change log, and the key is kept
+in the Keychain. If you never use it, the app never makes a network connection. Check your
+firm's policy and your clients' engagement terms before using it. Details are in
+[the manual](docs/MANUAL.md#grouping-accounts-with-ai).
+
+A client's file is one JSON document that you can read
 in any text editor; the format is described in [the manual](docs/MANUAL.md#15-the-json-file).
 Backups go in a `TB Backups` folder beside it. Standard grouping lists, binder layouts, saved
 import layouts, saved filters and window positions are kept on your Mac under `~/Library`.

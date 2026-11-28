@@ -39,7 +39,9 @@ lines, and export the result.
 
 It keeps everything for one engagement in **one JSON file** that lives in the client's folder.
 There is no server, no sign-in and no database. Copy the folder and you have copied the
-engagement.
+engagement. Nothing leaves your Mac, with one exception that happens only when you ask for it:
+**Group with AI** ([section 9](#9-accounts)) sends the accounts that have no grouping to
+Anthropic's Claude for a first pass.
 
 It is built for a client with **several trial balances on one chart of accounts**: a group of
 properties, a set of related companies, a fund and its subsidiaries. Each trial balance is its
@@ -214,11 +216,13 @@ prior. To start the next year, roll forward ([section 12](#12-prior-years-and-ro
 
 TB Tool ▸ **Settings…** (⌘,) holds what applies to every file. At the top right is
 **Appearance**: *Automatic* (the app is light or dark as the Mac is, and changes with it),
-*Light*, or *Dark*. The same choice is under View ▸ Appearance. Below are two tabs:
+*Light*, or *Dark*. The same choice is under View ▸ Appearance. Below are three tabs:
 
 - **Grouping Lists**: the firm and preparer that new files start with, the Hide zero rows
   switch, and the standard grouping lists ([section 10](#10-groupings)).
 - **Binder Layout**: the folders a brand-new binder starts with.
+- **AI**: the Anthropic API key that Group with AI uses, and exactly what that feature sends
+  ([section 9](#9-accounts)).
 
 ### The binder layout for new files
 
@@ -273,6 +277,7 @@ The import screen shows the source exactly as it is, with the app's reading of i
 - **Import into**: a new trial balance (with the name to give it, suggested from the file
   name), or an existing one, whose balances are replaced. Journal entries are never touched.
 - **Header row**: which row holds the column headings, or none.
+- **Split account numbers from names**: on to start with. See below.
 - **Balance signs** (when there is a single balance column): debits positive, credits positive,
   or normal balances shown positive (the sign then comes from each account's type).
 - **A role above each column**: Ignore, Account #, Account Name, Account # + Name, Debit,
@@ -299,6 +304,13 @@ The import screen shows the source exactly as it is, with the app's reading of i
   the app read as a total, a heading, or a line above the header to bring it in. A row brought
   in with no amount comes in at 0.00. One with no account is named for its row
   ("Unnamed (row 12)") so you can rename it afterwards.
+- **Split account numbers from names.** Normally a number at the front of an account
+  ("10001 Operating") is taken as its account number and the rest as its name, and a
+  sub-account path ("6500 Repairs - 6515 Supplies") is read as the sub-account. Untick this
+  when that is wrong for a file: names that merely start with a number ("2024 Bonus Accrual",
+  "401k Match", "1st Street Deposit"). The text is then kept whole as the account's name, the
+  account has no number, and it is kept by name. Remember this layout saves the choice with
+  the column roles.
 - **Show only rows that are left out or flagged** narrows the list to what needs a look.
 - **Remember this layout for files like this**: the next file with the same column headings
   uses these column roles automatically.
@@ -543,12 +555,13 @@ Every trial balance, consolidation, report, activity and grouping grid behaves t
 - **Hide zero rows** is one switch for the whole app. It appears on every trial balance and
   report screen and under View ▸ Hide Zero Balance Rows (⇧⌘0). The workbook export follows it.
 
-**Column widths are the same everywhere.** The Accounts, Grouping List and Journal Entries
-screens, and the binder's All Files view, follow the same rule as the grids: every column
-starts at the narrowest width that shows its heading and everything in it, and a column you
-resize by hand keeps the width you gave it, on that screen, from then on. (Accounts, Grouping
-List and Journal Entries are lists rather than grids: they sort by column and remember column
-order and hidden columns, and do not have the filter box or pinned totals.)
+**Column widths are the same everywhere.** The Accounts and Grouping List screens, and the
+binder's All Files view, follow the same rule as the grids: every column starts at the
+narrowest width that shows its heading and everything in it, and a column you resize by hand
+keeps the width you gave it, on that screen, from then on. (Accounts and Grouping List are
+lists rather than grids: they sort by column and remember column order and hidden columns, and
+do not have the filter box or pinned totals. The Journal Entries screen has no columns to
+size: it sets each entry out in full, as the report does.)
 
 ## 8. Journal entries
 
@@ -556,11 +569,45 @@ order and hidden columns, and do not have the filter box or pinned totals.)
 
 ![The journal entries screen](images/journal-entries.png)
 
-The Journal Entries screen lists every entry: number, type, date, trial balance, description,
-amount, linked files, and what happens to it next year. At the top: search, **Filters**, a type
-picker, **Edit**, **Duplicate**, **Next Year** (set the roll-forward choice for the selected
-entries), **Delete**, and **New Entry**. Double-click an entry to open it. Right-click for the
-same actions.
+The Journal Entries screen shows every entry in full, set out the way the Journal Entries
+report prints it ([section 13](#13-reports-and-exports)): a heading for each kind of entry,
+then each entry on its own with its number, date and description across the top, its
+references (click one to open the workpaper), its lines, and its total. Nothing is cut short
+and nothing has to be opened to be read. Each kind ends with its total, and the screen with
+the total of all entries. An entry rolled forward without amounts is marked *Waiting for
+amounts*; what happens to an entry next year is noted at its top right.
+
+At the top: **search** (number, description, account, trial balance, memo, reference),
+**Filters**, a **type picker** (All Types, or one kind), **Edit**, **Duplicate**, **Next
+Year** (set the roll-forward choice for the selected entries), **Delete**, and **New Entry**.
+
+**Selecting.** Click an entry to select it. ⌘-click adds or removes one; ⇧-click takes
+everything from the last entry clicked to this one. The bar above the list says how many are
+selected. Next Year and Delete act on all of them; Edit and Duplicate need exactly one.
+Double-click an entry to open it. Right-click an entry (or the selection it is part of) for
+the same actions.
+
+**Reordering, and renumbering.** Drag an entry up or down and let go on another entry of the
+same kind: on its top half to put it above, on its bottom half to put it below. A blue line
+shows where it will land. Dragging one of several selected entries moves them all, in the
+order they were in. Entries are listed in number order, so moving one **renumbers** that kind
+of entry to match the new order:
+
+- When the numbers are an unbroken run (AJE-1, AJE-2, AJE-3) there is only one way to do it,
+  and it is done at once.
+- When the numbers have gaps (AJE-1, AJE-2, AJE-5), you are asked: **Number AJE-1 to AJE-3**
+  closes the gaps, **Keep the Same Numbers** hands the same three numbers out in the new
+  order.
+- When they aren't one series (AJE-1, *Depreciation*, AJE-3), you are told they would all be
+  numbered afresh, and can cancel.
+
+![Asked how to renumber](images/reorder-ask.png)
+
+An entry stays among the entries of its own kind: an adjusting entry can't be dragged in among
+the reclassifying entries. References, lines and everything else about an entry are untouched;
+only its number changes. The change log gets one line listing each old and new number, and ⌘Z
+puts the order and the numbers back. With a search or filter narrowing the list, a move still
+renumbers every entry of that kind, including the ones not shown.
 
 ### Writing an entry
 
@@ -728,6 +775,10 @@ then:
   to apply the first match.
 - **Clear Grouping**, **Delete…**.
 
+**A first pass by AI:** **Group with AI…** at the top right (and **Suggest Groupings with
+AI…** on the alert banner) asks Claude to suggest a grouping for every ungrouped account. See
+[Grouping accounts with AI](#grouping-accounts-with-ai) below.
+
 **Changing one:** the Grouping cell is a menu. Using it on a selected row applies to the whole
 selection.
 
@@ -765,13 +816,133 @@ there.
 
 ![Adding an account](images/new-account.png)
 
-**Deleting** is allowed only for an account with no balances (this year or a prior year) and no
-journal lines.
+**Deleting.** Select accounts and click **Delete…**. An account that nothing refers to is
+deleted after one confirmation. An account **in use** — it has a balance this year, a balance
+in a prior year, or a line in a journal entry — brings up a list of exactly what refers to it,
+trial balance by trial balance and entry by entry, so nothing is hidden. (A prior-year balance
+is the usual surprise: it isn't on this year's screens unless the prior-year columns are
+shown.)
+
+![An account that is in use](images/delete-anyway.png)
+
+- **Delete Anyway** deletes the account and, with it, every balance and journal line listed.
+  You are then told what that leaves out of balance, line by line: each trial balance and
+  year (*Ashford: PP1 2025 is now out of balance by (12,168.98)*), and each journal entry
+  (*AJE-1 is now out of balance by (1,918.76)*). An entry whose only lines were on that
+  account is removed. Journal entries and this year's trial balances that no longer balance
+  stay in the data check until you put them right.
+- **Delete Only the N Not in Use** appears when the selection mixes accounts that are in use
+  with accounts that aren't.
+- **Cancel** leaves everything as it was.
+
+The change log records what was removed and what it left out of balance. ⌘Z brings back the
+account, its balances and its journal lines together. Balances of exactly zero never count as
+being in use.
 
 **Right-click an account** for Edit Number and Name… and Show Activity.
 
 **The Chart menu:** New Account…, Import Chart of Accounts…, Export Chart of Accounts (JSON or
 CSV).
+
+### Grouping accounts with AI
+
+**Group with AI…** hands the accounts that have no grouping to Claude Opus 5.5, Anthropic's
+model, for a first pass. It is meant for the moment after an import, when a few dozen (or a
+few hundred) new accounts each need a tax line. It works from **this file**: the grouping list
+it may choose from, and the accounts you have already grouped, which show how this set of
+books is treated. It never invents a grouping, and it never changes anything by itself: you
+review every suggestion first.
+
+Open it from the Accounts screen (**Group with AI…**), from the ungrouped-accounts banner
+(**Suggest Groupings with AI…**), or File ▸ Group Ungrouped Accounts with AI… (⌥⌘G).
+
+**This is the one thing in TB Tool that sends data off your Mac**, and only when you press
+Send. It needs an Anthropic API key of your own; see *The API key* below.
+
+**1. Choose what to send.**
+
+![Choosing what to send](images/ai-choose.png)
+
+The window says how many accounts have no grouping and how many grouped accounts there are to
+learn from. Below is every Excel and CSV file in the binder (`.xlsx`, `.xlsm`, `.csv`,
+`.tsv`), each with a checkbox. **Ticking files is optional.** Tick the ones that show how
+these accounts were treated before: last year's grouped trial balance, a prior-year workpaper,
+the client's own financial statements. Search narrows the list; **Tick All** ticks what is
+shown. With none ticked, Claude works from the trial balances already imported.
+
+Each ticked workbook is read on your Mac and reduced to a lightweight text version: **every
+tab**, every cell that holds something, as plain lines, with formatting, formulas and empty
+rows left behind. Its approximate size appears beside it. The line at the bottom says exactly
+what will go and about how large it is in *tokens* (the unit Anthropic bills by; roughly three
+characters each). A request too large for one pass is refused before anything is sent, with
+the size, so you can untick the larger files. Nothing is ever cut short silently.
+
+**2. Send.** **Send to Claude** sends one request (a chart with more than 200 ungrouped
+accounts is sent 200 at a time, one after another). It can take a minute or two; **Stop**
+abandons it. The trial balance is not changed while you wait.
+
+**3. Review.**
+
+![Reviewing the suggestions](images/ai-review.png)
+
+Every account comes back with a **suggested grouping**, a **confidence** (high, medium or
+low) and one line saying **why**. An account for which nothing in your list fits comes back as
+*No fit* rather than being forced into one.
+
+- Suggestions of high and medium confidence start ticked; **low and no-fit start unticked**.
+- The buttons across the top show All, High, Medium, Low or No fit. **Tick Shown** and
+  **Untick Shown** act on what is showing.
+- **Change any suggestion** from its menu before applying, or choose Leave Ungrouped.
+- **Apply N Groupings** applies the ticked ones as a single change. ⌘Z undoes all of it. The
+  rest stay ungrouped, still counted by the alert, for you to group by hand or send again.
+
+Treat it as you would a first-year's first pass: usually right on the plain accounts, worth a
+second look on the ones it marked medium, and yours to decide on the rest. An account's type
+follows its grouping, as always.
+
+**What is sent, exactly:**
+
+- the client's name, year end and entity type, and the names of its trial balances;
+- the file's grouping list (ids, codes, names, sections, account types);
+- the number, name and grouping of each account already grouped;
+- the number, name and final book balance of each ungrouped account, in each trial balance,
+  and its prior-year balance if the file has one;
+- every tab of each workbook you ticked.
+
+Journal entries, sign-offs, the change log, tax IDs, and every file you did not tick stay on
+your Mac. The request goes straight from your Mac to Anthropic's API (`api.anthropic.com`)
+under your key; there is no server of TB Tool's in between. How long Anthropic keeps API data
+and what it may do with it is set by your agreement with Anthropic, not by TB Tool. **Check
+your firm's policy and the client's engagement terms before sending client data to any outside
+service.**
+
+**The change log records each request**: when, by whom, how many accounts, and the names of
+the files that went with it. Applying suggestions is a second entry listing each account and
+the grouping it was given.
+
+**The API key.** TB Tool ▸ Settings… ▸ **AI**.
+
+![The AI settings](images/ai-settings.png)
+
+Create a key in the Claude Console (platform.claude.com ▸ API Keys), paste it, and click
+**Save Key**. It is kept in your Mac's **Keychain**, never in a trial balance file, the app's
+preferences, or a backup of the client folder. **Remove Key** deletes it. Anthropic bills the
+key's account for each request, by size; a typical request costs well under a dollar. After installing a new
+version of TB Tool, macOS may ask once whether TB Tool may use the saved key: choose Always
+Allow.
+
+**If it doesn't work:**
+
+| It says | What to do |
+|---|---|
+| The API key wasn't accepted | The key is mistyped, revoked, or from another workspace. Paste it again in Settings ▸ AI. |
+| The account's rate limit was reached | Wait a minute and send again. It retries twice by itself first. |
+| Anthropic's service is busy | The same: it has already retried; try again shortly. |
+| A billing problem | The key's account is out of credit or has no payment method. Fix it in the Claude Console. |
+| The request was too large | Untick some of the larger files. |
+| A file can't be read | An older `.xls` or a damaged workbook. Untick it, or save it as `.xlsx`. |
+| Claude declined this request | Rare. Send again without the context files. |
+| It stopped part way | The suggestions that did arrive are shown, with a note. Apply what you want and send again for the rest. |
 
 ### Reusing a chart between files
 
@@ -1751,7 +1922,7 @@ inside the app bundle at `TB Tool.app/Contents/MacOS/tbcli`, and is built by `sw
 
 ```
 tbcli new <file.json> [--name "Client"] [--period YYYY-MM-DD]
-tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names] [--append | --append-replace]
+tbcli import <file.json> <tb.xlsx|csv|txt> [--entity "Name"] [--sheet "Tab"] [--prior-year YYYY] [--use-file-names] [--append | --append-replace] [--keep-names-whole]
 tbcli map <file.json> <mapping.csv>
 tbcli coa-export <file.json> <out.json|out.csv>
 tbcli coa-import <file.json> <chart.json|csv|xlsx|other TB.json> [--overwrite] [--add-missing] [--no-types]
@@ -1769,7 +1940,7 @@ tbcli export <file.json> <out.xlsx | out.csv>
 | Command | What it does |
 |---|---|
 | `new` | Creates an empty file with the built-in grouping list. |
-| `import` | Imports one trial balance, detecting the layout (or using a saved one). The trial balance is named with `--entity`, or from the file name; if one by that name exists, its balances are replaced. With `--prior-year`, the file is that year's closing balances. An account the file names differently from the chart keeps the chart's name, and each is reported; with `--use-file-names` the chart takes the file's names instead. With `--append` the file is added to the trial balance instead of replacing its balances (an account both have gets the two amounts added; with `--append-replace`, the file's amount). Prints what was read and what was skipped. |
+| `import` | Imports one trial balance, detecting the layout (or using a saved one). The trial balance is named with `--entity`, or from the file name; if one by that name exists, its balances are replaced. With `--prior-year`, the file is that year's closing balances. An account the file names differently from the chart keeps the chart's name, and each is reported; with `--use-file-names` the chart takes the file's names instead. With `--append` the file is added to the trial balance instead of replacing its balances (an account both have gets the two amounts added; with `--append-replace`, the file's amount). With `--keep-names-whole`, a number at the front of an account's text is not split off as its account number: the text is kept whole as the name. Prints what was read and what was skipped. |
 | `map` | Assigns groupings from a two-column CSV: `account,grouping`. The grouping may be an id, a code, or "code name". An empty grouping clears the assignment. |
 | `coa-export` / `coa-import` | The chart of accounts with types and groupings. Import fills in ungrouped accounts unless `--overwrite`; `--add-missing` adds accounts; `--no-types` leaves types alone. |
 | `groupings-export` / `groupings-import` | The grouping list. Import replaces the list unless `--merge`. |
@@ -1811,7 +1982,7 @@ name, login and Mac of whoever ran it and what the command changed.
 
 | Item | Shortcut | |
 |---|---|---|
-| Settings… | ⌘, | The app's settings: new-file defaults, standard grouping lists, and the binder layout. |
+| Settings… | ⌘, | The app's settings: new-file defaults, standard grouping lists, the binder layout, and the AI key. |
 
 **File**
 
@@ -1828,6 +1999,7 @@ name, login and Mac of whoever ran it and what the command changed.
 | Paste Trial Balance | ⇧⌘V | From copied cells. |
 | New Blank Trial Balance… | | |
 | Import Chart of Accounts… / Export Chart of Accounts… | | |
+| Group Ungrouped Accounts with AI… | ⌥⌘G | A first pass at the accounts with no grouping, by Claude. You choose what is sent and review what comes back. |
 | Import Grouping List… / Export Grouping List… | | |
 | Make Binder Folders in a Folder… | | The standard binder folders, in any folder you choose. |
 | Show JSON File in Finder | ⇧⌘R | |
@@ -1882,10 +2054,14 @@ Export, Roll Forward, Trial Balance Settings.
 | Binder layouts | `~/Library/Application Support/TB Tool/Binder Layouts.json`. It appears only once you change the layout. |
 | Saved import layouts | `~/Library/Application Support/TB Tool/import-layouts.json` |
 | Workpaper sign-offs and the change log | In the engagement's `.json` file. |
+| The Anthropic API key (if you use Group with AI) | The Mac's Keychain, as "TB Tool Anthropic API key". |
 | Saved filters, column layouts and widths, window positions, view choices, light or dark appearance, which binder folders are closed, new-file defaults | The app's preferences. |
 
-Nothing is sent anywhere. The one time TB Tool talks to another app is when you open a
-workbook reference: it asks Excel, on your Mac, to go to a tab and select cells.
+Nothing is sent anywhere, with one exception that you start yourself: **Group with AI**
+([section 9](#9-accounts)) sends the ungrouped accounts, the grouping list, and any workbooks
+you tick to Anthropic's API. If you never use it, TB Tool never makes a network connection.
+The one time TB Tool talks to another app is when you open a workbook reference: it asks
+Excel, on your Mac, to go to a tab and select cells.
 
 ## 19. For AI assistants and scripts
 
@@ -1958,6 +2134,19 @@ of account types is present, give it the Account Type role.
 **The import asked me about account names.** The file uses a number the chart already has,
 under another name. Choose which name stands, or bring it in as a different account. See
 [section 5](#5-importing-trial-balances).
+
+**The import turned the start of an account's name into an account number.** A name such as
+"2024 Bonus Accrual" looks like a numbered account. Untick **Split account numbers from
+names** on the import screen and the names come in whole. For one stray account, import as
+usual and fix it with Edit… on the Accounts screen.
+
+**An account won't delete.** Something refers to it; the window lists what. Often it is a
+prior-year balance, which this year's screens don't show unless the prior-year columns are
+on. **Delete Anyway** removes the account with those balances and lines and tells you what is
+left out of balance. See [section 9](#9-accounts).
+
+**Group with AI says the key wasn't accepted, or nothing comes back.** See the table at the
+end of [Grouping accounts with AI](#grouping-accounts-with-ai).
 
 **A trial balance is out of balance after import.** Open the import again with **Show only rows
 that are left out or flagged**: a total line may have been brought in, or an account left out.

@@ -733,6 +733,56 @@ final class AppModel: ObservableObject {
         Windows.shared.close("entry:\(entryID)")
     }
 
+    /// Moves journal entries to a new place among the entries of their kind, and renumbers the
+    /// kind to match. When the numbers are a plain run there is one way to do that and it is
+    /// done; when they have gaps, or aren't a series, the choice is asked for first.
+    @discardableResult
+    func reorderEntries(moving: Set<String>, target: String, after: Bool, fromOne: Bool? = nil) -> Bool {
+        guard let e = engagement, let anchor = e.entry(target) else { return false }
+        let others = moving.compactMap { e.entry($0) }.filter { $0.type != anchor.type }
+        guard let plan = e.planReorder(moving: moving, target: target, after: after) else {
+            if !others.isEmpty {
+                status = "An entry stays among the entries of its own kind: \(others[0].number) is \(others[0].type.label.lowercased()), \(anchor.number) is \(anchor.type.label.lowercased())."
+            }
+            return false
+        }
+        let kind = Reports.journalTitle(plan.type).title.lowercased()
+        var numbers = plan.sameNumbers ?? plan.fromOne
+        if plan.ambiguous {
+            if let fromOne {
+                numbers = fromOne || plan.sameNumbers == nil ? plan.fromOne : plan.sameNumbers!
+            } else if !quiet {
+                let ask = NSAlert()
+                ask.messageText = "How should the \(plan.order.count) \(kind) be numbered?"
+                ask.addButton(withTitle: "Number \(plan.fromOne.first ?? "") to \(plan.fromOne.last ?? "")")
+                if let same = plan.sameNumbers {
+                    ask.informativeText = "Entries are listed in number order, so moving one means renumbering. These numbers have gaps: \(same.prefix(8).joined(separator: ", "))\(same.count > 8 ? "…" : ""). Close the gaps, or keep the same numbers in the new order?"
+                    ask.addButton(withTitle: "Keep the Same Numbers")
+                } else {
+                    ask.informativeText = "Entries are listed in number order, so moving one means renumbering. These numbers aren't one series (\(plan.order.prefix(6).compactMap { e.entry($0)?.number }.joined(separator: ", "))\(plan.order.count > 6 ? "…" : "")), so they would all be renumbered."
+                }
+                ask.addButton(withTitle: "Cancel")
+                let answer = ask.runModal()
+                if answer == .alertFirstButtonReturn {
+                    numbers = plan.fromOne
+                } else if plan.sameNumbers != nil && answer == .alertSecondButtonReturn {
+                    numbers = plan.sameNumbers!
+                } else {
+                    return false
+                }
+            }
+        }
+        let changed = zip(plan.order, numbers).compactMap { id, new -> String? in
+            guard let was = e.entry(id)?.number, was != new else { return nil }
+            return "\(was) → \(new)"
+        }
+        let ok = mutate("Reorder Journal Entries", notes: ["The \(kind) were put in a new order and renumbered: " + changed.joined(separator: ", ")], describe: false) {
+            try $0.applyReorder(plan, numbers: numbers)
+        }
+        if ok { status = "Renumbered \(changed.count) entr\(changed.count == 1 ? "y" : "ies"): \(changed.prefix(4).joined(separator: ", "))\(changed.count > 4 ? "…" : "")" }
+        return ok
+    }
+
     func setRollForward(_ value: RollForward, for ids: Set<String>) {
         mutate("Set Roll Forward") { e in
             for i in e.journalEntries.indices where ids.contains(e.journalEntries[i].id) { e.journalEntries[i].rollForward = value }
@@ -817,6 +867,73 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Deletes accounts, after asking. An account that still has a balance or a journal line is
+    /// shown with exactly what refers to it, and can be deleted anyway: its balances and lines
+    /// go with it, and what that leaves out of balance is reported.
+    @discardableResult
+    func deleteAccounts(_ ids: Set<String>, force: Bool? = nil) -> Bool {
+        guard let e = engagement, !ids.isEmpty else { return false }
+        let accounts = e.sortedAccounts.filter { ids.contains($0.id) }
+        let used = accounts.compactMap { a -> (Account, [String])? in
+            let uses = e.accountUses(a.id)
+            return uses.isEmpty ? nil : (a, uses)
+        }
+        let free = accounts.filter { a in !used.contains { $0.0.id == a.id } }
+        var forcing = force ?? false
+        var deleting = accounts
+        if force == nil && !quiet {
+            let ask = NSAlert()
+            ask.alertStyle = .warning
+            if used.isEmpty {
+                ask.messageText = accounts.count == 1 ? "Delete “\(accounts[0].display)”?" : "Delete \(accounts.count) accounts?"
+                ask.informativeText = "Nothing refers to \(accounts.count == 1 ? "it" : "them"). ⌘Z brings \(accounts.count == 1 ? "it" : "them") back."
+                ask.addButton(withTitle: "Delete")
+                ask.addButton(withTitle: "Cancel")
+                guard ask.runModal() == .alertFirstButtonReturn else { return false }
+            } else {
+                ask.messageText = accounts.count == 1 ? "“\(accounts[0].display)” is in use"
+                    : "\(used.count) of the \(accounts.count) accounts \(used.count == 1 ? "is" : "are") in use"
+                var lines: [String] = []
+                for (a, uses) in used.prefix(6) {
+                    if accounts.count > 1 { lines.append(a.display + ":") }
+                    lines += uses.prefix(6).map { (accounts.count > 1 ? "    " : "") + $0 }
+                    if uses.count > 6 { lines.append("    …and \(uses.count - 6) more") }
+                }
+                if used.count > 6 { lines.append("…and \(used.count - 6) more accounts") }
+                ask.informativeText = lines.joined(separator: "\n")
+                    + "\n\nDelete Anyway removes those balances and journal lines along with the account\(used.count == 1 ? "" : "s"). You will be told what that leaves out of balance, and ⌘Z puts everything back."
+                ask.addButton(withTitle: "Delete Anyway")
+                if !free.isEmpty { ask.addButton(withTitle: "Delete Only the \(free.count) Not in Use") }
+                ask.addButton(withTitle: "Cancel")
+                let answer = ask.runModal()
+                if answer == .alertFirstButtonReturn {
+                    forcing = true
+                } else if !free.isEmpty && answer == .alertSecondButtonReturn {
+                    deleting = free
+                } else {
+                    return false
+                }
+            }
+        } else if !forcing {
+            deleting = free
+        }
+        guard !deleting.isEmpty else { return false }
+        var left: [String] = []
+        let ok = mutate(deleting.count == 1 ? "Delete Account" : "Delete Accounts") { e in
+            for a in deleting { left += try e.deleteAccount(a.id, force: forcing) }
+        }
+        guard ok else { return false }
+        status = "Deleted \(deleting.count) account\(deleting.count == 1 ? "" : "s")"
+        let off = left.filter { $0.contains("out of balance") || $0.contains("was removed") }
+        if !left.isEmpty {
+            status += off.isEmpty ? "; everything still balances" : " — \(off.count) thing\(off.count == 1 ? " is" : "s are") now out of balance"
+            alert = AlertInfo(title: off.isEmpty ? "Deleted. Everything still balances." : "Deleted. Now out of balance:",
+                              message: (off.isEmpty ? left : off).prefix(14).joined(separator: "\n") + (off.count > 14 ? "\n…and \(off.count - 14) more" : "")
+                                  + (off.isEmpty ? "" : "\n\nJournal entries and this year's trial balances that don't balance stay in the data check until they are put right. ⌘Z undoes the deletion."))
+        }
+        return true
+    }
+
     func showEditAccount(_ id: String) {
         guard engagement?.account(id) != nil else { return }
         Windows.shared.close("edit-account")
@@ -863,9 +980,18 @@ final class AppModel: ObservableObject {
     }
 
     /// Settings for the app itself (as opposed to one trial balance file): the standard grouping lists.
-    func showAppSettings() {
+    func showAppSettings(tab: String? = nil) {
+        if let tab { UserDefaults.standard.set(tab, forKey: "settings.tab") }
         Windows.shared.show("app-settings", title: "TB Tool Settings", size: NSSize(width: 1000, height: 720), minSize: NSSize(width: 860, height: 560)) {
             AppSettingsView()
+        }
+    }
+
+    /// The window that asks Claude for a first pass at the accounts with no grouping.
+    func showAIGrouping() {
+        guard engagement != nil else { return }
+        Windows.shared.show("ai-grouping", title: "Group Accounts with AI", size: NSSize(width: 1040, height: 680), minSize: NSSize(width: 760, height: 520)) {
+            AIGroupingView()
         }
     }
 

@@ -757,6 +757,184 @@ enum Snapshotter {
             }))
         }
 
+        // With --tb-nine-demo (use a scratch copy): selecting and reordering journal entries,
+        // deleting an account that is in use, importing names whole, and the AI grouping windows.
+        // --tb-ai-endpoint <url> sends the AI request to a stand-in on this Mac.
+        if args.contains("--tb-nine-demo"), let first {
+            func main() -> NSWindow? { NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") ?? false } }
+            func say(_ text: String) { FileHandle.standardError.write(Data("  \(text)\n".utf8)) }
+            func click(_ point: NSPoint, in window: NSWindow, flags: NSEvent.ModifierFlags = []) {
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let e = NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) { NSApp.postEvent(e, atStart: false) }
+                }
+            }
+            func button(_ title: String) -> NSButton? {
+                for window in NSApp.windows where window.isVisible {
+                    if let hit = findAll(NSButton.self, in: window.contentView).first(where: { $0.title == title }) { return hit }
+                }
+                return nil
+            }
+            // A dialog that waits for an answer is started from a timer, so the steps carry on while it is up.
+            func later(_ body: @escaping () -> Void) {
+                let timer = Timer(timeInterval: 0.1, repeats: false) { _ in body() }
+                RunLoop.main.add(timer, forMode: .common)
+            }
+            func numbers() -> String {
+                guard let e = model.engagement else { return "" }
+                return Reports(e).sortedEntries().filter { $0.type == .adjusting }.map { "\($0.number) “\($0.description)”" }.joined(separator: ", ")
+            }
+            func adjusting() -> [JournalEntry] {
+                guard let e = model.engagement else { return [] }
+                return Reports(e).sortedEntries().filter { $0.type == .adjusting }
+            }
+
+            steps.append(("cards", {
+                Windows.shared.closeAll()
+                model.selection = .journal
+                main()?.makeKeyAndOrderFront(nil)
+            }))
+            steps.append(("cards-selected", {
+                guard let window = main(), let scroll = findAll(NSScrollView.self, in: window.contentView).max(by: { $0.bounds.width < $1.bounds.width }) else { return say("no journal list found") }
+                func at(_ y: CGFloat) -> NSPoint { scroll.convert(NSPoint(x: 420, y: scroll.isFlipped ? y : scroll.bounds.height - y), to: nil) }
+                click(at(100), in: window)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { click(at(270), in: window, flags: .command) }
+            }))
+            steps.append(("reordered", {
+                let list = adjusting()
+                guard list.count >= 2 else { return say("not enough adjusting entries") }
+                say("before: \(numbers())")
+                let ok = model.reorderEntries(moving: [list[1].id], target: list[0].id, after: false)
+                say("moved \(list[1].number) above \(list[0].number) (\(ok)): \(numbers())")
+                say("log: \(model.engagement?.auditLog.last?.details ?? [])")
+            }))
+            steps.append(("reorder-undone", {
+                model.undoManager?.undo()
+                say("after undo: \(numbers())")
+            }))
+            steps.append(("reorder-ask", {
+                let list = adjusting()
+                guard list.count >= 2 else { return }
+                model.mutate("Renumber Entry") { e in
+                    if let i = e.journalEntries.firstIndex(where: { $0.id == list[1].id }) { e.journalEntries[i].number = "AJE-5" }
+                }
+                say("with a gap: \(numbers())")
+                model.quiet = false
+                later {
+                    let ok = model.reorderEntries(moving: [list[1].id], target: list[0].id, after: false)
+                    say("after answering the dialog (\(ok)): \(numbers())")
+                }
+            }))
+            steps.append(("reorder-answered", {
+                guard let b = button("Number AJE-1 to AJE-2") else { return say("the renumbering dialog isn't up; buttons: \(NSApp.windows.filter(\.isVisible).flatMap { findAll(NSButton.self, in: $0.contentView).map(\.title) }.filter { !$0.isEmpty })") }
+                say("dialog buttons: \(findAll(NSButton.self, in: b.window?.contentView).map(\.title).filter { !$0.isEmpty })")
+                b.performClick(nil)
+                model.quiet = true
+            }))
+            let victim = "51100"
+            steps.append(("delete-ask", {
+                model.selection = .accounts
+                say("uses of \(victim): \(model.engagement?.accountUses(victim) ?? [])")
+                model.quiet = false
+                later {
+                    let ok = model.deleteAccounts([victim])
+                    say("delete returned \(ok); account still there: \(model.engagement?.account(victim) != nil)")
+                }
+            }))
+            steps.append(("delete-anyway", {
+                guard let b = button("Delete Anyway") else { return say("the in-use dialog isn't up") }
+                say("dialog buttons: \(findAll(NSButton.self, in: b.window?.contentView).map(\.title).filter { !$0.isEmpty })")
+                say("dialog says: \(findAll(NSTextField.self, in: b.window?.contentView).map { $0.stringValue.replacingOccurrences(of: "\n", with: " | ") }.filter { !$0.isEmpty })")
+                // What it says afterwards is read from the model here: a second alert would hold these steps up.
+                model.quiet = true
+                b.performClick(nil)
+            }))
+            steps.append(("delete-told", {
+                say("told: \(model.alert?.title ?? "(nothing)") — \(model.alert?.message.replacingOccurrences(of: "\n", with: " | ") ?? "")")
+                say("account gone: \(model.engagement?.account(victim) == nil)")
+                say("data check: \(model.issues.prefix(4))")
+            }))
+            steps.append(("delete-undone", {
+                model.alert = nil
+                model.undoManager?.undo()
+                say("after undo: account back \(model.engagement?.account(victim) != nil); uses \(model.engagement?.accountUses(victim).count ?? 0); data check \(model.issues.count) issues")
+            }))
+            if let url = files("--tb-import").first {
+                steps.append(("import-split", {
+                    model.cancelAllImports()
+                    model.queueImports([url])
+                }))
+                steps.append(("import-whole", {
+                    // The checkbox beside the header row menu. SwiftUI draws its label apart from the button, so find it by where it is.
+                    let window = NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("import") ?? false }
+                    let all = findAll(NSButton.self, in: window?.contentView)
+                    func frame(_ b: NSButton) -> NSRect { b.convert(b.bounds, to: nil) }
+                    guard let header = all.first(where: { $0.title.hasPrefix("Row ") }),
+                          let box = all.filter({ $0.title.isEmpty && abs(frame($0).midY - frame(header).midY) < 12 && frame($0).minX > frame(header).maxX }).min(by: { frame($0).minX < frame($1).minX })
+                    else { return say("no split checkbox found") }
+                    say("split checkbox is \(box.state == .on ? "on" : "off") to start with")
+                    box.performClick(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { say("after a click it is \(box.state == .on ? "on" : "off")") }
+                }))
+                steps.append(("import-whole-closed", { model.cancelAllImports() }))
+            }
+
+            // The AI grouping. The key is held in memory here, never in the Keychain.
+            if let i = args.firstIndex(of: "--tb-ai-endpoint"), i + 1 < args.count, let url = URL(string: args[i + 1]) { AIClient.endpoint = url }
+            let loose: Set<String> = ["10003", "51000", "51080", "51130", "51140", "51190", "51225", "51260", "51280", "51290"]
+            steps.append(("ai-settings", {
+                Windows.shared.closeAll()
+                try? AIKey.save("demo-key")
+                model.showAppSettings(tab: "ai")
+            }))
+            steps.append(("ai-choose", {
+                Windows.shared.closeAll()
+                UserDefaults.standard.set("groupings", forKey: "settings.tab")
+                model.mutate("Clear Grouping") { $0.setGrouping(nil, forAccounts: loose) }
+                model.selection = .accounts
+                model.showAIGrouping()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    guard let run = AIGroupingRun.current, let tree = model.binder else { return say("no AI window or no binder") }
+                    let files = AIGroupingRun.candidates(tree)
+                    say("workbooks offered: \(files.map(\.name))")
+                    run.pick(files.filter { $0.name.contains("QuickBooks") || $0.name.contains("Depreciation") }, in: tree)
+                }
+            }))
+            steps.append(("ai-sent", {
+                guard let run = AIGroupingRun.current, let e = model.engagement else { return }
+                say("ticked: \(run.picked.sorted()); sizes: \(run.sizes.values.sorted()); estimate \(run.estimate(e)) tokens; unreadable: \(run.unreadable)")
+                run.start(model)
+            }))
+            steps.append(("ai-review", {
+                guard let run = AIGroupingRun.current, let e = model.engagement else { return }
+                say("stage \(run.stage); failure \(run.failure ?? "none"); warning \(run.warning ?? "none"); served by \(run.servedBy)")
+                for p in run.proposals {
+                    say("  \(p.account) → \(p.grouping.map { e.groupingLabel($0) } ?? "no fit") [\(p.confidence)] \(run.accepted.contains(p.account) ? "ticked" : "unticked") — \(p.reason)")
+                }
+            }))
+            steps.append(("ai-applied", {
+                guard let run = AIGroupingRun.current else { return }
+                let ok = run.apply(model)
+                Windows.shared.close("ai-grouping")
+                say("applied (\(ok)): \(model.status); still ungrouped: \(model.engagement?.ungroupedAccounts.map(\.number) ?? [])")
+                for entry in model.engagement?.auditLog.suffix(2) ?? [] { say("log: \(entry.action) — \(entry.details.prefix(4))") }
+            }))
+            steps.append(("ai-undone", {
+                model.undoManager?.undo()
+                say("after undo, ungrouped: \(model.engagement?.ungroupedAccounts.count ?? 0)")
+            }))
+            steps.append(("ai-bad-key", {
+                try? AIKey.save("bad-key")
+                model.showAIGrouping()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { AIGroupingRun.current?.start(model) }
+            }))
+            steps.append(("ai-bad-key-told", {
+                say("with a key the service rejects: stage \(AIGroupingRun.current?.stage ?? .choose); \(AIGroupingRun.current?.failure ?? "no message")")
+                Windows.shared.closeAll()
+            }))
+            _ = first
+        }
+
         // --tb-only a,b,c: just these steps, by name.
         if let only = files("--tb-only").first?.lastPathComponent.split(separator: ",").map(String.init) {
             steps = steps.filter { only.contains($0.0) }
